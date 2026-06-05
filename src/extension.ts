@@ -24,11 +24,12 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  // ── Completion Provider ──
+  // ── Completion Provider (trigger on typing for keyword & step suggestions) ──
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       { language: 'feature', scheme: 'file' },
       new FeatureCompletionProvider(),
+      ' ', // trigger on space (after keyword)
     ),
   );
 

@@ -30,6 +30,48 @@ export const SCENARIO_KEYWORDS = [
 export const BACKGROUND_KEYWORDS = ['Background', '背景'] as const;
 export const EXAMPLES_KEYWORDS = ['Examples', '例子'] as const;
 
+// ── Language detection ──
+
+/** Document language based on `# language:` directive */
+export type DocLanguage = 'en' | 'zh-CN' | 'zh-TW';
+
+/**
+ * Detect the language of a .feature file from its `# language:` directive.
+ * Defaults to 'en' if not specified.
+ */
+export function detectDocumentLanguage(text: string): DocLanguage {
+  const match = text.match(/^#\s*language:\s*(\S+)/m);
+  if (!match) return 'en';
+  const lang = match[1].toLowerCase();
+  if (lang.startsWith('zh-tw') || lang.startsWith('zh_hant') || lang.startsWith('zh-hant')) return 'zh-TW';
+  if (lang.startsWith('zh')) return 'zh-CN';
+  return 'en';
+}
+
+/** Step keywords grouped by language */
+const STEP_KEYWORDS_BY_LANG: Record<DocLanguage, readonly string[]> = {
+  'en': ['Given', 'When', 'Then', 'And', 'But', '*'],
+  'zh-CN': ['假如', '假设', '假定', '当', '那么', '而且', '并且', '同时', '但是'],
+  'zh-TW': ['假設', '當', '那麼', '並且', '同時'],
+};
+
+/** Structural keywords grouped by language */
+const STRUCTURAL_KEYWORDS_BY_LANG: Record<DocLanguage, string[]> = {
+  'en': ['Feature', 'Rule', 'Scenario', 'Scenario Outline', 'Background', 'Examples'],
+  'zh-CN': ['功能', '规则', '场景', '场景大纲', '剧本大纲', '剧本', '背景', '例子'],
+  'zh-TW': ['功能', '規則', '場景', '場景大綱', '劇本大綱', '劇本', '背景', '例子'],
+};
+
+/** Get step keywords for a specific language. */
+export function getStepKeywordsForLanguage(lang: DocLanguage): readonly string[] {
+  return STEP_KEYWORDS_BY_LANG[lang];
+}
+
+/** Get structural keywords for a specific language. */
+export function getStructuralKeywordsForLanguage(lang: DocLanguage): string[] {
+  return STRUCTURAL_KEYWORDS_BY_LANG[lang];
+}
+
 /**
  * Parse a step line and return the keyword and description text.
  * Example: "假如 用户登录系统" → { keyword: "假如", text: "用户登录系统" }
