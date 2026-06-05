@@ -1,3 +1,5 @@
+import { patternMatches } from './parsePattern';
+
 /**
  * Gherkin keyword definitions for both English and Chinese (zh-CN/zh-TW).
  * Source: https://github.com/cucumber/gherkin/blob/main/gherkin-languages.json
@@ -143,41 +145,30 @@ export function normalizeDecorator(text: string): string | undefined {
 
 /**
  * Check if a feature step text matches a step definition text.
- * Handles parameterized placeholders: "{param}", "<param>", parse/cfparse, re patterns.
- * Supports Chinese text correctly.
+ * Handles:
+ *   - Format patterns: "{param}", "{param:d}", "{param:.2f}" (parse/cfparse)
+ *   - Regex patterns: "user (\d+) login", "user (?P<user_id>\d+) login" (parsers.re)
+ *   - Exact text: "ETL 无数据"
+ * Supports Chinese and English text.
  */
 export function stepMatchesDefinition(featureStep: string, definitionStep: string): boolean {
-  const normalizedFeature = featureStep.toLowerCase().trim();
-  const normalizedDef = definitionStep.toLowerCase().trim();
-
-  // 1. Exact match
-  if (normalizedFeature === normalizedDef) {
+  // 1. Try format pattern matching (parse/cfparse)
+  if (patternMatches(featureStep, definitionStep)) {
     return true;
   }
 
-  // 2. Convert definition to regex pattern
-  // Strategy: replace placeholders with a temp marker FIRST, then escape, then restore
-  const PLACEHOLDER = '___PARAM___';
-
-  // Replace all placeholder types with the marker
-  let withMarkers = normalizedDef
-    .replace(/\{[^}]+\}/g, PLACEHOLDER)   // {param} (default parser)
-    .replace(/<[^>]+>/g, PLACEHOLDER)      // <param> (cfparse)
-    .replace(/"[^"]*"/g, PLACEHOLDER)      // "quoted string"
-    .replace(/'[^']*'/g, PLACEHOLDER);     // 'quoted string'
-
-  // Escape regex special chars in the remaining text
-  let escaped = withMarkers.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  // Replace markers with regex capture group, and whitespace with flexible match
-  let pattern = escaped
-    .replace(new RegExp(PLACEHOLDER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '(.+)')
-    .replace(/\s+/g, '\\s+');
-
-  try {
-    return new RegExp(`^${pattern}$`).test(normalizedFeature);
-  } catch {
-    // Invalid regex, fallback
-    return false;
+  // 2. Try regex matching (parsers.re)
+  //    Detect regex patterns: contains \d, \w, \s, (?P<, (?:, etc.
+  if (/[\\](?:d|w|s|S|W|D|b|B)|\(\?:|\(\?P</.test(definitionStep)) {
+    try {
+      // Convert Python-style named groups (?P<name>...) to ES2018 (?<name>...)
+      const jsPattern = definitionStep.replace(/\(\?P<(\w+)>/g, '(?<$1>');
+      const regex = new RegExp(`^${jsPattern}$`, 'u');
+      return regex.test(featureStep);
+    } catch {
+      // Invalid regex, skip
+    }
   }
+
+  return false;
 }

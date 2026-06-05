@@ -3,6 +3,11 @@
   "displayName": "BDD Feature",
   "description": "Enhanced pytest-bdd .feature file support with Chinese/English Gherkin highlighting, step navigation, and test integration",
   "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/StrayDragon/vscode-bdd-feature.git"
+  },
   "engines": {
     "vscode": "^1.105.1"
   },
