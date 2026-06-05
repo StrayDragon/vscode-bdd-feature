@@ -1,71 +1,112 @@
-# vscode-bdd-feature README
+# BDD Feature
 
-This is the README for your extension "vscode-bdd-feature". After writing up a brief description, we recommend including the following sections.
+Enhanced VS Code extension for pytest-bdd `.feature` files with **Chinese and English** Gherkin support.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+### Syntax Highlighting
 
-For example if there is an image subfolder under your extension project workspace:
+Full syntax highlighting for `.feature` files supporting both English and Chinese Gherkin keywords:
 
-\!\[feature X\]\(images/feature-x.png\)
+```gherkin
+# language: zh-CN
+功能: 用户管理
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+  场景: 用户登录
+    假设 用户已注册
+    当 用户输入正确的用户名和密码
+    那么 登录成功
+```
 
-## Requirements
+- **Step keywords**: `Given`/`假如`/`假设`, `When`/`当`, `Then`/`那么`, `And`/`而且`/`并且`/`同时`, `But`/`但是`
+- **Structural keywords**: `Feature`/`功能`, `Scenario`/`场景`/`剧本`, `Rule`/`规则`, `Background`/`背景`, `Examples`/`例子`
+- `@tags`, `# comments`, `|tables|`, `<placeholders>`, `"strings"`, `"""docstrings"""`
+- Table header row semantic highlighting
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+### Go to Definition
 
-## Extension Settings
+`Ctrl+Click` on a step in a `.feature` file to jump to the corresponding Python `@given`/`@when`/`@then` definition.
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+Supports Chinese step text matching:
+```gherkin
+    假设 用户 90232 订单存在    # → jumps to @given("用户 {uid} 订单存在")
+```
 
-For example:
+### Auto Completion
 
-This extension contributes the following settings:
+Type a step keyword and get suggestions from your Python step definitions. Works with Chinese keywords (`假如`, `当`, `那么`, etc.).
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+### Create Step Definition
 
-## Known Issues
+Place cursor on a step line and run **BDD: Create Step Definition** to generate a Python step stub:
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+```python
+@given("用户 {uid} 订单存在")
+def user_order_exists(uid):
+    # TODO: implement step
+    pass
+```
 
-## Release Notes
+Supports `string`, `parse`, `cfparse`, and `re` parsers.
 
-Users appreciate release notes as you update your extension.
+### Run & Debug Scenarios
 
-### 1.0.0
+- **Run Scenario** (`Ctrl+Shift+R`): Run the scenario under cursor via pytest
+- **Debug Scenario** (`Ctrl+Shift+T`): Debug with Python debugger
+- **Run/Debug File**: Run the entire file
 
-Initial release of ...
+### Test Explorer
 
-### 1.0.1
+Native VS Code Test Explorer integration using `vscode.TestController`:
+- Auto-discovers scenarios in `.feature` files
+- Run/debug individual scenarios or entire features
+- Pass/fail/skip status indicators
 
-Fixed issue #.
+### Find References
 
-### 1.1.0
+Right-click → **Find References** on a step to see all usages across feature files, or from a Python decorator to find all referencing feature files.
 
-Added features X, Y, and Z.
+## Commands
 
----
+| Command | Shortcut | Description |
+|---|---|---|
+| `BDD: Create Step Definition` | `Ctrl+Shift+C` | Generate Python step stub from current step |
+| `BDD: Run Scenario` | `Ctrl+Shift+R` | Run scenario under cursor |
+| `BDD: Debug Scenario` | `Ctrl+Shift+T` | Debug scenario under cursor |
+| `BDD: Run File` | — | Run current file |
+| `BDD: Debug File` | — | Debug current file |
+| `BDD: Refresh Step Definitions` | — | Re-scan step definition files |
 
-## Following extension guidelines
+## Configuration
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+| Setting | Default | Description |
+|---|---|---|
+| `bddFeature.parser` | `"string"` | Parser type for step generation (`string`, `parse`, `cfparse`, `re`) |
+| `bddFeature.pytestCommand` | `"pytest -q"` | Pytest command for running tests |
+| `bddFeature.pytestDebugArgs` | `[]` | Extra args for pytest debug sessions |
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+## Supported Gherkin Languages
 
-## Working with Markdown
+This extension highlights keywords for both English and Chinese (Simplified/Traditional):
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+| English | 简体中文 | 繁體中文 |
+|---|---|---|
+| Feature | 功能 | 功能 |
+| Rule | 规则 | 規則 |
+| Scenario | 场景、剧本 | 場景、劇本 |
+| Scenario Outline | 场景大纲、剧本大纲 | 場景大綱、劇本大綱 |
+| Background | 背景 | 背景 |
+| Examples | 例子 | 例子 |
+| Given | 假如、假设、假定 | 假如、假設、假定 |
+| When | 当 | 當 |
+| Then | 那么 | 那麼 |
+| And | 而且、并且、同时 | 而且、並且、同時 |
+| But | 但是 | 但是 |
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+## Acknowledgements
 
-## For more information
+This project is inspired by and builds upon [vscode-pytest-bdd](https://gitlab.com/vtenentes/pytest-bdd) by **Vassilis Tenentes** (`vtenentes@yahoo.gr`). The original extension provided the foundational feature set for pytest-bdd IDE support. This project re-implements the functionality using modern VS Code APIs and adds Chinese Gherkin language support.
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+## License
 
-**Enjoy!**
+MIT

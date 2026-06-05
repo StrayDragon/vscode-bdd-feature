@@ -1,26 +1,84 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import { FeatureDefinitionProvider } from './definitionProvider';
+import { FeatureCompletionProvider } from './completionProvider';
+import { FeatureSemanticTokensProvider, semanticTokensLegend } from './semanticToken';
+import { FeatureReferenceProvider } from './referenceProvider';
+import { createStepDefinition } from './createStep';
+import { runScenario, runFile } from './runner';
+import { BddTestController } from './testController';
+import { scanStepDefinitions, registerStepRefreshOnSave } from './steps';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext): void {
+  const outputChannel = vscode.window.createOutputChannel('BDD Feature');
+  outputChannel.appendLine('BDD Feature extension activating...');
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "vscode-bdd-feature" is now active!');
+  // ── Step definitions scanning ──
+  scanStepDefinitions();
+  registerStepRefreshOnSave(context.subscriptions);
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('vscode-bdd-feature.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from vscode-bdd-feature!');
-	});
+  // ── Definition Provider ──
+  context.subscriptions.push(
+    vscode.languages.registerDefinitionProvider(
+      { language: 'feature', scheme: 'file' },
+      new FeatureDefinitionProvider(),
+    ),
+  );
 
-	context.subscriptions.push(disposable);
+  // ── Completion Provider ──
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      { language: 'feature', scheme: 'file' },
+      new FeatureCompletionProvider(),
+    ),
+  );
+
+  // ── Semantic Tokens Provider ──
+  context.subscriptions.push(
+    vscode.languages.registerDocumentSemanticTokensProvider(
+      { language: 'feature', scheme: 'file' },
+      new FeatureSemanticTokensProvider(),
+      semanticTokensLegend,
+    ),
+  );
+
+  // ── Reference Provider ──
+  context.subscriptions.push(
+    vscode.languages.registerReferenceProvider(
+      [{ language: 'feature', scheme: 'file' }, { language: 'python', scheme: 'file' }],
+      new FeatureReferenceProvider(),
+    ),
+  );
+
+  // ── Test Controller ──
+  const testController = new BddTestController();
+  context.subscriptions.push(testController);
+
+  // ── Commands ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand('bddFeature.createStep', () => createStepDefinition()),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('bddFeature.runScenario', () => runScenario(false)),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('bddFeature.debugScenario', () => runScenario(true)),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('bddFeature.runFile', () => runFile(false)),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('bddFeature.debugFile', () => runFile(true)),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('bddFeature.refreshSteps', async () => {
+      await scanStepDefinitions();
+      vscode.window.showInformationMessage('BDD step definitions refreshed');
+    }),
+  );
+
+  outputChannel.appendLine('BDD Feature extension activated');
 }
 
-// This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate(): void {
+  // Cleanup handled by disposables
+}

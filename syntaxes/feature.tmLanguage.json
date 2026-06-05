@@ -1,0 +1,101 @@
+{
+  "scopeName": "source.feature",
+  "patterns": [
+    { "include": "#language-declaration" },
+    { "include": "#comments" },
+    { "include": "#tags" },
+    { "include": "#feature-header" },
+    { "include": "#rule-header" },
+    { "include": "#scenario-header" },
+    { "include": "#background-header" },
+    { "include": "#examples-header" },
+    { "include": "#step-keyword" },
+    { "include": "#docstring" },
+    { "include": "#table" },
+    { "include": "#placeholder" },
+    { "include": "#strings" }
+  ],
+  "repository": {
+    "language-declaration": {
+      "match": "^\\s*#\\s*language:\\s*\\S+",
+      "name": "keyword.control.language.feature"
+    },
+    "comments": {
+      "match": "#.*",
+      "name": "comment.line.feature"
+    },
+    "tags": {
+      "match": "@[\\p{L}\\p{N}_./-]+",
+      "name": "entity.name.tag.feature"
+    },
+    "feature-header": {
+      "match": "^\\s*(Feature|功能)\\s*:",
+      "name": "keyword.control.feature"
+    },
+    "rule-header": {
+      "match": "^\\s*(Rule|规则)\\s*:",
+      "name": "keyword.control.feature"
+    },
+    "scenario-header": {
+      "match": "^\\s*(Scenario Outline|场景大纲|剧本大纲|Scenario|场景|剧本)\\s*:",
+      "name": "keyword.control.feature"
+    },
+    "background-header": {
+      "match": "^\\s*(Background|背景)\\s*:",
+      "name": "keyword.control.feature"
+    },
+    "examples-header": {
+      "match": "^\\s*(Examples|例子)\\s*:",
+      "name": "keyword.control.feature"
+    },
+    "step-keyword": {
+      "patterns": [
+        {
+          "match": "^\\s*(Given|When|Then|And|But|\\*|假如|假设|假定|当|那么|而且|并且|同时|但是)\\b",
+          "name": "keyword.action.feature"
+        }
+      ]
+    },
+    "docstring": {
+      "begin": "\"\"\"",
+      "end": "\"\"\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.feature" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.feature" } },
+      "name": "string.quoted.triple.feature"
+    },
+    "table": {
+      "patterns": [
+        {
+          "match": "^\\s*\\|",
+          "name": "punctuation.definition.table.feature"
+        },
+        {
+          "match": "\\|",
+          "name": "punctuation.definition.table.feature"
+        }
+      ]
+    },
+    "placeholder": {
+      "match": "<[\\p{L}\\p{N}_-]+>",
+      "name": "variable.parameter.feature"
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.feature" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.feature" } },
+          "name": "string.quoted.double.feature"
+        },
+        {
+          "begin": "'",
+          "end": "'",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.feature" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.feature" } },
+          "name": "string.quoted.single.feature"
+        }
+      ]
+    }
+  }
+}

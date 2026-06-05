@@ -1,0 +1,33 @@
+{
+  "comments": {
+    "lineComment": "#",
+    "blockComment": ["\"\"\"", "\"\"\""]
+  },
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "autoClosingPairs": [
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "'", "close": "'", "notIn": ["string"] },
+    { "open": "\"\"\"", "close": "\"\"\"" }
+  ],
+  "surroundingPairs": [
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"" },
+    { "open": "'", "close": "'" }
+  ],
+  "folding": {
+    "markers": {
+      "start": "^\\s*(Feature|功能|Rule|规则|Scenario|场景|剧本|Background|背景)\\s*:",
+      "end": "(?=^\\s*(Feature|功能|Rule|规则|Scenario|场景|剧本|Background|背景)\\s*:)"
+    }
+  },
+  "wordPattern": "[\\p{L}\\p{N}_-]+"
+}
