@@ -51,7 +51,7 @@ export class FeatureDefinitionProvider implements vscode.DefinitionProvider {
         // Continue if it's And/But/*
       }
       // Stop at structural keywords
-      if (/^\s*(Feature|功能|Scenario|场景|剧本|Background|背景|Rule|规则)\s*:/i.test(lineText)) {
+      if (/^\s*(Feature|功能|Scenario\s*Outline|场景大纲|剧本大纲|Scenario|场景|剧本|Background|背景|Rule|规则)\s*:/i.test(lineText)) {
         break;
       }
     }

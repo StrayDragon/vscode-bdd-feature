@@ -41,7 +41,8 @@ export function parseStepLine(line: string): { keyword: string; text: string } |
         return { keyword: kw, text: trimmed.slice(kw.length).trimStart() };
       }
     } else {
-      const re = new RegExp(`^${kw}(?:\\s|$)`);
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`^${escaped}(?:\\s|$)`);
       if (re.test(trimmed)) {
         return { keyword: kw, text: trimmed.slice(kw.length).trimStart() };
       }
@@ -140,19 +141,41 @@ export function normalizeDecorator(text: string): string | undefined {
 
 /**
  * Check if a feature step text matches a step definition text.
- * Handles parameterized placeholders: "{param}" in definitions ↔ quoted strings in features.
- * Also handles Chinese text correctly.
+ * Handles parameterized placeholders: "{param}", "<param>", parse/cfparse, re patterns.
+ * Supports Chinese text correctly.
  */
 export function stepMatchesDefinition(featureStep: string, definitionStep: string): boolean {
-  // Normalize both: lowercase, replace parameterized parts with placeholder
-  const normalize = (s: string): string => {
-    return s
-      .toLowerCase()
-      .replace(/["'][^"']*["']/g, '_')   // "quoted" → _
-      .replace(/\{[^}]+\}/g, '_')         // {param} → _
-      .replace(/<[^>]+>/g, '_')           // <placeholder> → _
-      .replace(/\s+/g, ' ')
-      .trim();
-  };
-  return normalize(featureStep) === normalize(definitionStep);
+  const normalizedFeature = featureStep.toLowerCase().trim();
+  const normalizedDef = definitionStep.toLowerCase().trim();
+
+  // 1. Exact match
+  if (normalizedFeature === normalizedDef) {
+    return true;
+  }
+
+  // 2. Convert definition to regex pattern
+  // Strategy: replace placeholders with a temp marker FIRST, then escape, then restore
+  const PLACEHOLDER = '___PARAM___';
+
+  // Replace all placeholder types with the marker
+  let withMarkers = normalizedDef
+    .replace(/\{[^}]+\}/g, PLACEHOLDER)   // {param} (default parser)
+    .replace(/<[^>]+>/g, PLACEHOLDER)      // <param> (cfparse)
+    .replace(/"[^"]*"/g, PLACEHOLDER)      // "quoted string"
+    .replace(/'[^']*'/g, PLACEHOLDER);     // 'quoted string'
+
+  // Escape regex special chars in the remaining text
+  let escaped = withMarkers.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Replace markers with regex capture group, and whitespace with flexible match
+  let pattern = escaped
+    .replace(new RegExp(PLACEHOLDER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '(.+)')
+    .replace(/\s+/g, '\\s+');
+
+  try {
+    return new RegExp(`^${pattern}$`).test(normalizedFeature);
+  } catch {
+    // Invalid regex, fallback
+    return false;
+  }
 }

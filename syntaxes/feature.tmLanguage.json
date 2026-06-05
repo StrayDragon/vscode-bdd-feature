@@ -51,7 +51,7 @@
     "step-keyword": {
       "patterns": [
         {
-          "match": "^\\s*(Given|When|Then|And|But|\\*|假如|假设|假定|当|那么|而且|并且|同时|但是)\\b",
+          "match": "^\\s*(Given|When|Then|And|But|\\*|假如|假设|假定|当|那么|而且|并且|同时|但是)(?=\\s|$)",
           "name": "keyword.action.feature"
         }
       ]

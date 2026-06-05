@@ -82,7 +82,7 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
     const trimmed = line.text.trim();
 
     // Check if we're on a @given/@when/@then decorator
-    const decoratorMatch = trimmed.match(/^@(given|when|then)\s*\(/);
+    const decoratorMatch = trimmed.match(/^@(given|when|then|step)\s*\(/);
     if (!decoratorMatch) {
       return [];
     }
