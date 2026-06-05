@@ -122,6 +122,7 @@ export function formatTestName(name: string): string {
  * Extracts the step text from patterns like:
  *   @given("some text")
  *   @when(Parser("some {param}"))
+ *   @given(parsers.parse("some {param}"))
  *   @then(r"regex pattern")
  */
 export function normalizeDecorator(text: string): string | undefined {
@@ -132,7 +133,8 @@ export function normalizeDecorator(text: string): string | undefined {
   }
   const body = decoratorMatch[2].trim();
   // Extract the string content from quotes
-  const strMatch = body.match(/(?:Parser\s*\()?(?:r?["'])(.+?)(?:["'])/s);
+  // Handles: "text", Parser("text"), parsers.parse("text"), parsers.cfparse("text")
+  const strMatch = body.match(/(?:(?:parsers\.)?(?:parse|cfparse|re)\s*\()?(?:Parser\s*\()?(?:r?["'])(.+?)(?:["'])/s);
   if (strMatch) {
     return strMatch[1].replace(/\\n.*/s, '').trim();
   }
