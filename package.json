@@ -171,7 +171,7 @@
       "properties": {
         "bddFeature.parser": {
           "type": "string",
-          "default": "string",
+          "default": "parse",
           "enum": ["string", "parse", "cfparse", "re"],
           "enumDescriptions": [
             "Exact string matching (default)",
@@ -179,7 +179,7 @@
             "Cardinality field parser: {param:Type+}",
             "Regular expression matching"
           ],
-          "description": "Step definition parser type for generating step stubs"
+          "description": "Step definition parser type for generating Python step stubs"
         },
         "bddFeature.pytestCommand": {
           "type": "string",
@@ -190,6 +190,16 @@
           "type": "array",
           "default": [],
           "description": "Extra arguments passed to pytest when debugging"
+        },
+        "bddFeature.cargoTestCommand": {
+          "type": "string",
+          "default": "cargo test",
+          "description": "Cargo command used for running rstest-bdd scenarios"
+        },
+        "bddFeature.featuresBaseDir": {
+          "type": "string",
+          "default": null,
+          "description": "Base directory for .feature paths in scenarios() calls (mirrors pytest-bdd's bdd_features_base_dir ini). Defaults to each binding file's directory."
         }
       }
     },
@@ -211,7 +221,8 @@
     "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "update-gherkin-languages": "node scripts/update-gherkin-languages.mjs && node scripts/generate-grammar.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.105.1",
