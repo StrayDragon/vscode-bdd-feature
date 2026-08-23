@@ -4,6 +4,36 @@ All notable changes to the "vscode-bdd-feature" extension will be documented in 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [Unreleased]
+
+### Added
+
+- **Diagnostics** (`enableDiagnostics`): undefined steps, duplicate/invalid/unused
+  definitions (parametric-aware), unbound features — with related-information links.
+  Sub-toggles under `bddFeature.diagnostics.*`.
+- **Quick Fixes** (`enableCodeActions`): create missing step stub; bind feature
+  via new `BDD: Bind this feature to a test` command (`scenarios()` / `#[scenario]`).
+- **CodeLens** (`enableCodeLens`): Run/Debug per scenario, Run All per feature,
+  reference counts above step definitions.
+- **Document Symbols** (`enableDocumentSymbols`): Feature→Rule→Scenario outline &
+  breadcrumbs; **Workspace Symbols** (`enableWorkspaceSymbols`): `#` search across
+  scenarios and step patterns.
+- **Folding Ranges** (`enableFoldingRanges`): scenario/rule/background/docstring blocks.
+- **Hover** (`enableHover`): definition preview cards on steps (with jump link);
+  exact pytest/cargo command on scenario headers.
+- **Table Formatting** (`enableTableFormatting`): CJK-width-aware pipe alignment.
+- **Rename** (`enableRename`): exact-match steps across definition + features;
+  scenario titles sync with Rust `#[scenario(name=…)]` in both directions.
+- **Snippets** (`enableSnippets`): gherkin skeletons at line start.
+- **Test Explorer**: lazy discovery, `python`/`rust`/`unbound` tags, Continuous Run.
+
+### Fixed
+
+- Hover resolves step type through And/But inheritance (Chinese steps no longer
+  report "no definition").
+- Table formatting preserves CRLF line endings.
+- Unused-definition detection understands parametric patterns.
+
 ## [0.2.0] - 2026-08-23
 
 ### Added

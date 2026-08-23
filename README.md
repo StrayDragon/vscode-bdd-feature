@@ -2,9 +2,11 @@
 
 Enhanced VS Code extension for BDD `.feature` files with **spec-driven, multilingual** Gherkin support (80+ languages from the official `gherkin-languages.json`, including English / 简体中文 / 繁體中文), step navigation for **pytest-bdd (Python)** and **rstest-bdd (Rust)**, and test integration.
 
+> 版本标注约定:各 feature 首次引入的版本随标题标注;`HEAD` 表示尚未发布(下个版本交付)。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## Features
 
-### Syntax Highlighting (generated from the official Gherkin spec)
+### Syntax Highlighting *(v0.0.1;规范数据驱动生成自 v0.2.0)*
 
 `syntaxes/feature.tmLanguage.json` is **generated** from the vendored official
 language data — every language cucumber supports is highlighted:
@@ -25,7 +27,7 @@ language data — every language cucumber supports is highlighted:
 
 Keyword parsing is **never hardcoded**: the runtime engine (`src/gherkin/`) builds keyword indexes from `src/gherkin/gherkin-languages.json` (cucumber/gherkin, MIT). Documents declaring `# language: <code>` match that dialect; undeclared documents fall back to a longest-match across all languages — so Chinese files without the directive still resolve.
 
-### Go to Definition (precise landing)
+### Go to Definition *(v0.0.1 基础跳转;精确定位 + 双语言自 v0.2.0)*
 
 `Ctrl+Click` on a step jumps to its definition **landing exactly on the pattern text**, via `LocationLink.targetSelectionRange`:
 
@@ -33,7 +35,7 @@ Keyword parsing is **never hardcoded**: the runtime engine (`src/gherkin/`) buil
 - Rust: `#[given("配置了 mock 模型 {name:string}")]`
 - Scenario headers jump to their binding site (`scenarios("...")` call or `#[scenario(...)]` attribute)
 
-Matching semantics are faithful to the underlying frameworks:
+Matching semantics are faithful to the underlying frameworks *(v0.2.0)*:
 
 | Framework | Matcher | Behavior |
 |---|---|---|
@@ -44,11 +46,11 @@ Matching semantics are faithful to the underlying frameworks:
 
 Multi-line decorators/attributes with parens inside string literals are handled by a string-aware scanner.
 
-### Auto Completion
+### Auto Completion *(v0.0.1;Rust 定义与方言关键词自 v0.2.0)*
 
 Keyword + step suggestions in your document language, from both Python and Rust step definitions, with snippet placeholders for parameters.
 
-### Create Step Definition
+### Create Step Definition *(Python v0.0.1;Rust v0.2.0)*
 
 Generates a stub into an existing step file (Python or Rust), e.g.:
 
@@ -66,7 +68,7 @@ fn configured_mock_model(name: String) {
 }
 ```
 
-### Run & Debug Scenarios (binding-aware)
+### Run & Debug Scenarios *(v0.0.1;绑定感知 + 忠实命名自 v0.2.0)*
 
 - Locates the binding for the current feature/scenario:
   - Python: files calling `scenarios()` / `scenario()` (paths resolved like pytest-bdd; honors `bdd_features_base_dir` via `bddFeature.featuresBaseDir`)
@@ -74,14 +76,14 @@ fn configured_mock_model(name: String) {
 - Runs `pytest <binding>.py::test_<python_name>` using pytest-bdd's **actual** name-generation rules (Unicode-aware), or `cargo test --test <target> <fn_name>` for Rust
 - Debug uses debugpy for Python scenarios
 
-### Test Explorer
+### Test Explorer *(v0.0.1 基础;懒加载/标签/Continuous Run 自 HEAD)*
 
 Native `vscode.TestController`:
 - **Lazy discovery** — feature nodes resolve scenarios on demand (fast on large repos)
 - **Tags** — each scenario is tagged `python` / `rust` / `unbound`; filter in the UI
 - **Continuous Run** — enable the built-in toggle; watched `.feature/.py/.rs` changes re-run automatically
 
-### Diagnostics, Quick Fixes & UX Mechanisms (each independently toggleable)
+### Diagnostics, Quick Fixes & UX Mechanisms *(HEAD;each independently toggleable)*
 
 | Mechanism | What you get | Toggle |
 |---|---|---|
@@ -97,36 +99,39 @@ Native `vscode.TestController`:
 
 All toggles live under the `bddFeature.*` configuration section and apply instantly.
 
-### Find References
+### Find References *(v0.0.1;参数化感知 + Rust 方向自 v0.2.0)*
 
 From a feature step → all other usages resolving to the same definition(s); from a Python decorator / Rust attribute → all feature steps referencing it.
 
 ## Commands
 
-| Command | Shortcut | Description |
-|---|---|---|
-| `BDD: Create Step Definition` | `Ctrl+Shift+C` | Generate a Python/Rust step stub |
-| `BDD: Run Scenario` | `Ctrl+Shift+R` | Run scenario under cursor via its binding |
-| `BDD: Debug Scenario` | `Ctrl+Shift+T` | Debug scenario under cursor |
-| `BDD: Run File` / `Debug File` | — | Run whole file |
-| `BDD: Refresh Step Definitions` | — | Re-scan definitions & bindings |
+| Command | Shortcut | Description | Since |
+|---|---|---|---|
+| `BDD: Create Step Definition` | `Ctrl+Shift+C` | Generate a Python/Rust step stub | v0.0.1(Rust 自 v0.2.0) |
+| `BDD: Run Scenario` | `Ctrl+Shift+R` | Run scenario under cursor via its binding | v0.0.1(绑定感知自 v0.2.0) |
+| `BDD: Debug Scenario` | `Ctrl+Shift+T` | Debug scenario under cursor | v0.0.1(绑定感知自 v0.2.0) |
+| `BDD: Run File` / `Debug File` | — | Run whole file | v0.0.1 |
+| `BDD: Refresh Step Definitions` | — | Re-scan definitions & bindings | v0.0.1 |
+| `BDD: Bind this feature to a test` | — | Quick fix/command generating a binding stub | HEAD |
 
 ## Configuration
 
-| Setting | Default | Description |
-|---|---|---|
-| `bddFeature.parser` | `"parse"` | Stub generation parser (`string`, `parse`, `cfparse`, `re`) |
-| `bddFeature.pytestCommand` | `"pytest -q"` | Pytest command for running tests |
-| `bddFeature.pytestDebugArgs` | `[]` | Extra args for pytest debug sessions |
-| `bddFeature.cargoTestCommand` | `"cargo test"` | Cargo command for rstest-bdd runs |
-| `bddFeature.featuresBaseDir` | `null` | Base dir for feature paths in `scenarios()` (mirrors pytest-bdd's ini) |
+| Setting | Default | Description | Since |
+|---|---|---|---|
+| `bddFeature.parser` | `"parse"` | Stub generation parser (`string`, `parse`, `cfparse`, `re`) | v0.0.1 |
+| `bddFeature.pytestCommand` | `"pytest -q"` | Pytest command for running tests | v0.0.1 |
+| `bddFeature.pytestDebugArgs` | `[]` | Extra args for pytest debug sessions | v0.0.1 |
+| `bddFeature.cargoTestCommand` | `"cargo test"` | Cargo command for rstest-bdd runs | v0.2.0 |
+| `bddFeature.featuresBaseDir` | `null` | Base dir for feature paths in `scenarios()` (mirrors pytest-bdd's ini) | v0.2.0 |
+| `bddFeature.enable*` / `diagnostics.*` | 见上方机制表 | Per-mechanism toggles (diagnostics, code lens, symbols, hover, …) | HEAD |
 
-## Architecture Notes
+## Architecture Notes *(v0.2.0 重构确立;`providers/` 自 HEAD)*
 
 - `src/gherkin/` — spec-driven keyword engine (`gherkin-languages.json` is the single source of truth; regenerate grammar with `node scripts/generate-grammar.mjs`)
 - `src/patterns/` — faithful pattern compilers (Python `parse`, Rust format placeholders)
 - `src/scanners/` — pure-text scanners for Python/Rust step definitions and scenario bindings
 - `src/bindings.ts` — feature → binding index powering navigation and test running
+- `src/providers/` — toggleable UX mechanisms (diagnostics, code lens, symbols, hover, …)
 - `test-fixtures/` — self-contained example workspaces (Python + Rust) used by the unit tests
 
 ## Acknowledgements
