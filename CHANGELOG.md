@@ -4,6 +4,33 @@ All notable changes to the "vscode-bdd-feature" extension will be documented in 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.2.0] - 2026-08-23
+
+### Added
+
+- **Spec-driven multilingual keywords**: runtime keyword engine built from the official
+  cucumber `gherkin-languages.json` (80 languages) — no hardcoded keyword lists.
+  Documents with `# language: <code>` match that dialect; undeclared files fall back
+  to longest-match across all languages (Chinese works without the directive).
+- **Generated syntax highlighting**: `feature.tmLanguage.json` is now generated from the
+  same spec data (`pnpm run update-gherkin-languages` refreshes both).
+- **rstest-bdd (Rust) support**: `#[given|when|then("...")]` steps (raw strings,
+  multi-line attributes), `#[scenario(path, name)]` bindings, faithful placeholder
+  semantics (`:string` quote stripping, `u/i/f` numerics), `cargo test` runner.
+- **Precise go-to-definition**: jumps land exactly on the pattern text via
+  `LocationLink.targetSelectionRange`; scenario headers jump to their binding site.
+- **Fixed pytest-bdd matching semantics** (verified against `parse==1.22`): untyped
+  `{param}` captures lazily across spaces — multi-word values now resolve.
+- **Binding-aware runs**: locates real binding files (`scenarios()` / `#[scenario]`),
+  generates pytest-bdd's actual test names (Unicode-aware), resolves Rust test targets.
+- **Create step stubs** for Python and Rust targets.
+
+### Fixed
+
+- Step definitions whose decorators span multiple lines or contain parentheses inside
+  string literals are scanned correctly.
+- Jump positioning no longer lands at column 0 of the decorator.
+
 ## [0.0.1] - 2026-06-05
 
 ### Added
