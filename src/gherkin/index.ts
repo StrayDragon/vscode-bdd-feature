@@ -180,9 +180,9 @@ export function parseStepLine(
   if (!trimmed) {
     return undefined;
   }
-  const { steps } = keywordsFor(dialect);
+  const { steps, continuations } = keywordsFor(dialect);
 
-  for (const kw of [...steps, ...ALL_CONTINUATION]) {
+  for (const kw of [...steps, ...continuations]) {
     if (!trimmed.startsWith(kw)) {
       continue;
     }
@@ -264,6 +264,36 @@ export function isStructuralKeyword(line: string): boolean {
     }
   }
   return false;
+}
+
+/** Parse a Rule header line ("Rule: x" / "规则: x"); returns title or undefined. */
+export function parseRuleLine(line: string): string | undefined {
+  return parseStructuralByRole(line, 'rule');
+}
+
+/** Parse a Background header line. */
+export function parseBackgroundLine(line: string): string | undefined {
+  return parseStructuralByRole(line, 'background');
+}
+
+/** Parse an Examples header line. */
+export function parseExamplesLine(line: string): string | undefined {
+  return parseStructuralByRole(line, 'examples');
+}
+
+function parseStructuralByRole(
+  line: string,
+  role: 'feature' | 'rule' | 'scenario' | 'scenarioOutline' | 'background' | 'examples',
+): string | undefined {
+  const trimmed = line.trimStart();
+  for (const kw of STRUCTURAL_LOOKUP.get(role) ?? []) {
+    const re = new RegExp(`^${escapeRe(kw)}\\s*:`);
+    const m = trimmed.match(re);
+    if (m) {
+      return trimmed.slice(m[0].length).trim();
+    }
+  }
+  return undefined;
 }
 
 /**

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { parseStepLine, detectDocumentLanguage, resolveInheritedStepType } from './gherkin';
 import { getWorkspaceRoot } from './utils';
 import { getStepDefinitions, scanStepDefinitions } from './steps';
@@ -168,8 +169,8 @@ async function _selectTargetFile(): Promise<vscode.Uri | undefined> {
 
 async function bootstrapStepFile(root: string, python: boolean): Promise<vscode.Uri> {
   const fileUri = python
-    ? vscode.Uri.file(require('path').join(root, 'step_defs', 'test_steps.py'))
-    : vscode.Uri.file(require('path').join(root, 'tests', 'bdd_steps.rs'));
+    ? vscode.Uri.file(path.join(root, 'step_defs', 'test_steps.py'))
+    : vscode.Uri.file(path.join(root, 'tests', 'bdd_steps.rs'));
   const initial = python
     ? 'from pytest_bdd import given, when, then\n'
     : 'use rstest_bdd_macros::{given, then, when};\n';

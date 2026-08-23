@@ -1,5 +1,10 @@
 import * as vscode from 'vscode';
-import { parseStepLine, parseScenarioLine, detectDocumentLanguage } from '../gherkin';
+import {
+  parseStepLine,
+  parseScenarioLine,
+  detectDocumentLanguage,
+  resolveInheritedStepType,
+} from '../gherkin';
 import { findMatchingSteps } from '../steps';
 import { pytestTestName } from '../testNames';
 import { getBindingsForFeature, ensureBindings } from '../bindings';
@@ -25,13 +30,17 @@ export class BddHoverProvider implements vscode.HoverProvider {
 
     const parsed = parseStepLine(line.text, dialect);
     if (parsed) {
-      return this._stepHover(document, position, parsed.text, parsed.keyword);
+      // Resolve type incl. And/But inheritance so CJK/continuation steps work
+      const type =
+        parsed.type ??
+        resolveInheritedStepType(n => document.lineAt(n).text, position.line, dialect);
+      return this._stepHover(document, position, parsed.text, type);
     }
 
     const scenario = parseScenarioLine(line.text, dialect);
     if (scenario !== undefined) {
       await ensureBindings();
-      return this._scenarioHover(scenario);
+      return this._scenarioHover(document.uri.fsPath, scenario);
     }
     return undefined;
   }
@@ -40,12 +49,9 @@ export class BddHoverProvider implements vscode.HoverProvider {
     document: vscode.TextDocument,
     position: vscode.Position,
     text: string,
-    keyword: string,
-  ): vscode.Hover | undefined {
+    type: 'given' | 'when' | 'then' | undefined,
+  ): vscode.Hover {
     void document;
-    const type =
-      (['Given', 'When', 'Then'].includes(keyword) ? keyword.toLowerCase() : undefined) as
-        | 'given' | 'when' | 'then' | undefined;
     const matches = findMatchingSteps(text, type);
     if (matches.length === 0) {
       return new vscode.Hover(
@@ -56,23 +62,21 @@ export class BddHoverProvider implements vscode.HoverProvider {
     md.appendMarkdown(matches.length > 1 ? `**${matches.length} matching definitions**\n\n` : '');
     for (const def of matches.slice(0, 5)) {
       const file = def.file.path.split('/').pop();
+      const openArgs = encodeURIComponent(JSON.stringify([def.file.toString(), def.decoratorLine]));
       md.appendMarkdown(
         `${LANG_ICON[def.lang] ?? ''} \`${def.matcherKind}\` **${def.text}**\n\n` +
-          `→ [${file}:${def.decoratorLine + 1}](${def.file.with({ fragment: `L${def.decoratorLine + 1}` })}) · @${def.type}\n\n`,
+          `→ [${file}:${def.decoratorLine + 1}](command:bddFeature._openDefinition?${openArgs} "Go to definition") · @${def.type}\n\n`,
       );
     }
     if (matches.length > 1) {
       md.appendMarkdown('_Ambiguous — multiple definitions match. Check Problems panel for duplicates._');
     }
-    const hovered = document.lineAt(position.line);
-    return new vscode.Hover(md, new vscode.Range(position.line, 0, position.line, hovered.text.length));
+    const hoveredLine = document.lineAt(position.line).text.length;
+    return new vscode.Hover(md, new vscode.Range(position.line, 0, position.line, hoveredLine));
   }
 
-  private async _scenarioHover(scenarioName: string): Promise<vscode.Hover> {
-    const bindings = getBindingsForFeature(
-      vscode.window.activeTextEditor?.document.uri.fsPath ?? '',
-      scenarioName,
-    );
+  private _scenarioHover(featureFsPath: string, scenarioName: string): vscode.Hover {
+    const bindings = getBindingsForFeature(featureFsPath, scenarioName);
     if (bindings.length === 0) {
       return new vscode.Hover(new vscode.MarkdownString('🔓 _No test binding for this scenario_'));
     }
@@ -80,9 +84,7 @@ export class BddHoverProvider implements vscode.HoverProvider {
     for (const b of bindings) {
       if (b.lang === 'python') {
         const pytestCmd = cfg('pytestCommand', 'pytest -q').split(/\s+/)[0];
-        md.appendMarkdown(
-          `🐍 \`${pytestCmd} "${b.file.path}::${pytestTestName(scenarioName)}"\`\n\n`,
-        );
+        md.appendMarkdown(`🐍 \`${pytestCmd} "${b.file.path}::${pytestTestName(scenarioName)}"\`\n\n`);
       } else if (b.rustTestFnName) {
         md.appendMarkdown(`🦀 \`cargo test -- --exact ${b.rustTestFnName}\`\n\n`);
       }

@@ -161,8 +161,16 @@ export class BddRenameProvider implements vscode.RenameProvider {
           if (p?.text !== oldText) {
             continue;
           }
-          const idx = raw.lastIndexOf(p.text);
-          edit.replace(uri, new vscode.Range(i, idx, i, idx + p.text.length), newText);
+          // Locate the step text via the keyword offset (lastIndexOf could
+          // mis-target when the text appears twice on one line).
+          const kwIdx = raw.indexOf(p.keyword);
+          if (kwIdx < 0) {
+            continue;
+          }
+          const after = raw.slice(kwIdx + p.keyword.length);
+          const ws = after.length - after.trimStart().length;
+          const start = kwIdx + p.keyword.length + ws;
+          edit.replace(uri, new vscode.Range(i, start, i, start + oldText.length), newText);
         }
       } catch {
         // skip

@@ -6,7 +6,7 @@
  */
 
 import * as vscode from 'vscode';
-import { parseStepLine, parseFeatureLine, parseScenarioLine, detectDocumentLanguage } from '../gherkin';
+import { parseStepLine, parseFeatureLine, parseScenarioLine, detectDocumentLanguage, isStructuralKeyword } from '../gherkin';
 import { compilePythonParsePattern } from '../patterns/pythonParsePattern';
 import { compileRustFormatPattern } from '../patterns/rustFormatPattern';
 import { getStepDefinitions, scanStepDefinitions } from '../steps';
@@ -41,8 +41,12 @@ export function analyzeFeature(
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    if (parseScenarioLine(raw, dialect) !== undefined || /^\s*(?:Background|背景)\s*:/.test(raw)) {
-      hasScenario = hasScenario || parseScenarioLine(raw, dialect) !== undefined;
+    const scenarioTitle = parseScenarioLine(raw, dialect);
+    if (scenarioTitle !== undefined) {
+      hasScenario = true;
+      continue;
+    }
+    if (isStructuralKeyword(raw)) {
       continue;
     }
     const parsed = parseStepLine(raw, dialect);
@@ -96,7 +100,7 @@ function inheritType(
     if (p?.type) {
       return p.type;
     }
-    if (/^\s*[^:\s]+:/.test(lines[i]) && p === undefined) {
+    if (p === undefined && isStructuralKeyword(lines[i])) {
       return undefined;
     }
   }
@@ -248,8 +252,10 @@ export class BddDiagnostics {
 }
 
 async function tagUnused(perFile: Map<string, RawDiagnostic[]>, defs: StepDefinition[]): Promise<void> {
+  // Collect every parsed step usage across features (parametric-aware:
+  // a definition counts as used when ANY usage text resolves to it).
   const files = await vscode.workspace.findFiles('**/*.feature', '**/{node_modules,target}/**', 3000);
-  const usedTexts = new Set<string>();
+  const usages: string[] = [];
   for (const uri of files) {
     try {
       const doc = await vscode.workspace.openTextDocument(uri);
@@ -257,7 +263,7 @@ async function tagUnused(perFile: Map<string, RawDiagnostic[]>, defs: StepDefini
       for (const line of doc.getText().split(/\r?\n/)) {
         const p = parseStepLine(line, dialect);
         if (p) {
-          usedTexts.add(p.text.trim());
+          usages.push(p.text);
         }
       }
     } catch {
@@ -265,7 +271,7 @@ async function tagUnused(perFile: Map<string, RawDiagnostic[]>, defs: StepDefini
     }
   }
   for (const def of defs) {
-    if (usedTexts.has(def.text.trim())) {
+    if (usages.some(u => stepMatchesDefinition(u, def))) {
       continue;
     }
     const arr = perFile.get(def.file.fsPath) ?? [];

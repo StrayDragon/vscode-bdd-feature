@@ -7,7 +7,9 @@ import * as vscode from 'vscode';
 import {
   parseFeatureLine,
   parseScenarioLine,
-  parseStepLine,
+  parseRuleLine,
+  parseBackgroundLine,
+  parseExamplesLine,
   detectDocumentLanguage,
 } from '../gherkin';
 import { getStepDefinitions, scanStepDefinitions } from '../steps';
@@ -23,28 +25,14 @@ export interface BlockSpan {
   endLine: number;
 }
 
+/** Structural header parsers keyed by block role — all spec-driven. */
 const ROLE_PARSERS: Array<[BlockSpan['role'], (l: string) => string | undefined]> = [
   ['feature', l => parseFeatureLine(l)],
   ['rule', parseRuleLine],
   ['scenario', l => parseScenarioLine(l)],
-  ['background', l => matchKw(l, ['Background', '背景'])],
-  ['examples', l => matchKw(l, ['Examples', '例子'])],
+  ['background', parseBackgroundLine],
+  ['examples', parseExamplesLine],
 ];
-
-function parseRuleLine(line: string): string | undefined {
-  return matchKw(line, ['Rule', '规则']);
-}
-
-function matchKw(line: string, kws: string[]): string | undefined {
-  const t = line.trimStart();
-  for (const kw of kws) {
-    const m = new RegExp(`^${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`).exec(t);
-    if (m) {
-      return t.slice(m[0].length).trim();
-    }
-  }
-  return undefined;
-}
 
 /** Identify the structural block a line belongs to (undefined for others). */
 export function classifyHeaderLine(line: string): BlockSpan['role'] | undefined {
@@ -53,8 +41,7 @@ export function classifyHeaderLine(line: string): BlockSpan['role'] | undefined 
     return undefined;
   }
   for (const [role, parser] of ROLE_PARSERS) {
-    // scenario covers outline variants via gherkin module
-    if ((role === 'scenario' ? parseScenarioLine(line) : parser(line)) !== undefined) {
+    if (parser(line) !== undefined) {
       return role;
     }
   }
@@ -70,18 +57,8 @@ export function computeBlockSpans(lines: string[]): BlockSpan[] {
     if (!role) {
       continue;
     }
-    let title = '';
-    switch (role) {
-      case 'feature':
-        title = parseFeatureLine(lines[i], dialect) ?? '';
-        break;
-      case 'scenario':
-        title = parseScenarioLine(lines[i], dialect) ?? '';
-        break;
-      default:
-        title = ROLE_PARSERS.find(([r]) => r === role)![1](lines[i]) ?? '';
-    }
-    headers.push({ role, title, headerLine: i, endLine: lines.length - 1 });
+    const parser = ROLE_PARSERS.find(([r]) => r === role)![1];
+    headers.push({ role, title: parser(lines[i]) ?? '', headerLine: i, endLine: lines.length - 1 });
   }
   for (let i = 0; i < headers.length; i++) {
     const next = headers[i + 1];

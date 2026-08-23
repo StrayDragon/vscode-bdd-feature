@@ -102,12 +102,12 @@ export class BddTestController {
       return;
     }
     await ensureBindings();
+    let doc: vscode.TextDocument;
     try {
-      const doc = await vscode.workspace.openTextDocument(item.uri);
+      doc = await vscode.workspace.openTextDocument(item.uri);
     } catch {
       return;
     }
-    const doc = await vscode.workspace.openTextDocument(item.uri);
     const dialect = detectDocumentLanguage(doc.getText());
     const lines = doc.getText().split(/\r?\n/);
 

@@ -50,7 +50,3 @@ export interface FeatureBinding {
   /** Rust only: generated test function name to pass to cargo test */
   rustTestFnName?: string;
 }
-
-export function isContinuationKeyword(keyword: string): boolean {
-  return ['And', 'But', '*', '而且', '并且', '同时', '但是', '並且'].includes(keyword);
-}

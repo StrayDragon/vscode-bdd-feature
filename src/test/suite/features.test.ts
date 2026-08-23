@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { alignTables, displayWidth, splitRow } from '../../providers/tableFormat';
+import { alignTables, displayWidth, splitRow, alignTablesText } from '../../providers/tableFormat';
 import { computeBlockSpans, findDocstrings } from '../../providers/symbols';
 import { analyzeFeature } from '../../providers/diagnostics';
 
@@ -8,6 +8,16 @@ suite('Table alignment (CJK-width aware)', () => {
     assert.strictEqual(displayWidth('abc'), 3);
     assert.strictEqual(displayWidth('金牌'), 4);
     assert.strictEqual(displayWidth('a金b'), 4);
+  });
+
+  test('preserves CRLF line endings', () => {
+    // Regression: joining with \n corrupted CRLF documents
+    const text = '功能: x\r\n  | a | bb |\r\n  | 金牌 | 1 |';
+    const out = alignTablesText(text);
+    assert.ok(out.includes('\r\n'), 'must keep CRLF endings');
+    assert.strictEqual((out.match(/\r\n/g) ?? []).length, 2);
+    // and still aligns
+    assert.ok(out.includes('| a    | bb |') || out.includes('| a   | bb '), out);
   });
 
   test('splitRow trims cells and outer pipes', () => {
@@ -83,6 +93,18 @@ suite('Block spans & folding core', () => {
   test('finds docstring ranges', () => {
     assert.deepStrictEqual(findDocstrings(lines), [[13, 15]]);
   });
+
+  test('zh-TW structural keywords resolve via spec data (no hardcoding)', () => {
+    // Per official gherkin-languages.json, zh-TW rule keyword is "Rule"
+    // (unlike zh-CN which adds 规则) — the engine follows the data.
+    const tw = ['功能: 測試', '', '  Rule: 規則一', '    場景: 登入', '      假如 已註冊'];
+    const spans = computeBlockSpans(tw);
+    assert.deepStrictEqual(
+      spans.map(s => s.role),
+      ['feature', 'rule', 'scenario'],
+    );
+    assert.strictEqual(spans[1].title, '規則一');
+  });
 });
 
 suite('Diagnostics analysis core', () => {
@@ -129,5 +151,20 @@ suite('Diagnostics analysis core', () => {
     const on = analyzeFeature(lines, [], false, { undefinedSteps: false, unboundFeatures: true });
     assert.strictEqual(on.length, 1);
     assert.strictEqual(on[0].code, 'unboundFeature');
+  });
+
+  test('table row containing a colon does not break And/But inheritance', () => {
+    // Regression: ad-hoc structural regex treated "| time: x" as a boundary
+    const lines = [
+      'Feature: t',
+      'Scenario: s',
+      'Given an approved merchant',
+      '| time: noon |',
+      'And the queue is empty',
+    ];
+    const out = analyzeFeature(lines, defs, true, { undefinedSteps: true, unboundFeatures: false });
+    // "the queue is empty" inherits given → no exact def matches it
+    const msgs = out.map(d => d.message);
+    assert.ok(msgs.some(m => m.includes('the queue is empty')));
   });
 });

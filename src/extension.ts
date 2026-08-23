@@ -143,6 +143,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('bddFeature.debugFile', () => runFile(true)),
     vscode.commands.registerCommand('bddFeature.bindFeature', (uri?: vscode.Uri) => bindFeatureCommand(uri)),
     vscode.commands.registerCommand(
+      'bddFeature._openDefinition',
+      async (uriString: string, line: number) => {
+        const uri = vscode.Uri.parse(uriString);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(doc, { preview: true });
+        const lineLength = doc.lineAt(Math.min(line, doc.lineCount - 1)).text.length;
+        editor.revealRange(new vscode.Range(line, 0, line, lineLength));
+        editor.selection = new vscode.Selection(line, 0, line, lineLength);
+      },
+    ),
+    vscode.commands.registerCommand(
       'bddFeature._resolveUsageLens',
       async (uri: vscode.Uri, line: number, def: StepDefinition) => {
         const usages = await findStepUsages([def], { excludeUri: uri });
@@ -169,7 +180,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
 function registerStepRefreshHook(disposables: vscode.Disposable[], cb: () => void): void {
   disposables.push(vscode.workspace.onDidSaveTextDocument(doc => {
-    if (doc.languageId === 'python' || doc.languageId === 'rust') {
+    if (
+      doc.languageId === 'python' ||
+      doc.languageId === 'rust' ||
+      doc.languageId === 'feature'
+    ) {
       cb();
     }
   }));

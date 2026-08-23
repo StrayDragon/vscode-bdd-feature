@@ -44,6 +44,7 @@ export function splitRow(line: string): string[] {
 }
 /**
  * Re-align every table row group intersecting [startLine, endLine].
+ * `eol` preserves the document's line endings (CRLF-safe).
  * Returns new array of lines (same length).
  */
 export function alignTables(
@@ -69,6 +70,17 @@ export function alignTables(
     i = j + 1;
   }
   return out;
+}
+
+/** Provider-facing helper that keeps the document's EOL style intact. */
+export function alignTablesText(
+  text: string,
+  startLine = 0,
+  endLine = Number.MAX_SAFE_INTEGER,
+): string {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  return alignTables(lines, startLine, Math.min(endLine, lines.length - 1)).join(eol);
 }
 
 function alignGroup(out: string[], first: number, last: number): void {
@@ -113,12 +125,12 @@ export class BddTableFormattingProvider implements vscode.DocumentRangeFormattin
     if (!toggles.tableFormat()) {
       return [];
     }
-    const lines = document.getText().split(/\r?\n/);
-    const aligned = alignTables(lines, range.start.line, range.end.line);
-    const fullRange = new vscode.Range(0, 0, lines.length, 0);
-    if (aligned.join('\n') === lines.join('\n')) {
+    const aligned = alignTablesText(document.getText(), range.start.line, range.end.line);
+    if (aligned === document.getText()) {
       return []; // nothing to do — avoids dirtying the document
     }
-    return [vscode.TextEdit.replace(fullRange, aligned.join('\n'))];
+    // Replace only the affected table groups' span to minimize churn
+    const fullRange = new vscode.Range(0, 0, document.lineCount, 0);
+    return [vscode.TextEdit.replace(fullRange, aligned)];
   }
 }
