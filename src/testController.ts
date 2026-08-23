@@ -1,16 +1,21 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { parseScenarioLine, formatTestName } from './gherkin';
-import { execAsync, getWorkspaceRoot, getOutputChannel } from './utils';
+import {
+  parseScenarioLine,
+  parseFeatureLine,
+  detectDocumentLanguage,
+} from './gherkin';
+import { pytestTestName } from './testNames';
+import { ensureBindings, getBindingsForFeature } from './bindings';
+import { getWorkspaceRoot } from './utils';
 
 /**
- * VS Code native Test Controller for pytest-bdd scenarios.
- * Uses the Test API (vscode.TestController) instead of a custom TreeDataProvider.
+ * VS Code native Test Controller.
+ *
+ * Discovers scenarios in .feature files and executes them through their
+ * discovered bindings (pytest for Python, cargo test for Rust).
  */
 export class BddTestController {
   private _controller: vscode.TestController;
-  private _runProfile: vscode.TestRunProfile | undefined;
-  private _debugProfile: vscode.TestRunProfile | undefined;
   private _disposables: vscode.Disposable[] = [];
 
   constructor() {
@@ -19,34 +24,24 @@ export class BddTestController {
       'BDD Feature Tests',
     );
 
-    this._controller.refreshHandler = () => this._discoverTests();
+    this._controller.refreshHandler = () => this.refresh();
 
-    // Run profile
-    this._runProfile = this._controller.createRunProfile(
+    this._controller.createRunProfile(
       'Run',
       vscode.TestRunProfileKind.Run,
       (request, token) => this._runTests(request, token),
     );
 
-    // Debug profile
-    this._debugProfile = this._controller.createRunProfile(
-      'Debug',
-      vscode.TestRunProfileKind.Debug,
-      (request, token) => this._debugTests(request, token),
-    );
-
-    // Watch for file changes
     this._disposables.push(
       vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.languageId === 'feature') {
           this._refreshFeatureFile(doc);
         }
       }),
-      vscode.workspace.onDidChangeWorkspaceFolders(() => this._discoverTests()),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => void this.refresh()),
     );
 
-    // Initial discovery
-    this._discoverTests();
+    void this.refresh();
   }
 
   dispose(): void {
@@ -56,98 +51,82 @@ export class BddTestController {
     }
   }
 
-  /**
-   * Discover all .feature files and their scenarios.
-   */
-  private async _discoverTests(): Promise<void> {
-    const featureFiles = await vscode.workspace.findFiles('**/*.feature');
+  /** Full re-discovery of feature files + binding index. */
+  async refresh(): Promise<void> {
+    await ensureBindings();
+    const featureFiles = await vscode.workspace.findFiles(
+      '**/*.feature',
+      '**/{node_modules,target}/**',
+      3000,
+    );
     this._controller.items.replace([]);
-
-    for (const fileUri of featureFiles) {
+    for (const uri of featureFiles) {
       try {
-        const doc = await vscode.workspace.openTextDocument(fileUri);
-        this._addFeatureFileItems(fileUri, doc);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        this._addFeatureFileItems(uri, doc);
       } catch {
-        // Skip unreadable files
+        // skip
       }
     }
   }
 
-  /**
-   * Parse a feature file and add its scenarios as test items.
-   */
   private _addFeatureFileItems(fileUri: vscode.Uri, doc: vscode.TextDocument): void {
-    const text = doc.getText();
-    const lines = text.split(/\r?\n/);
+    const dialect = detectDocumentLanguage(doc.getText());
+    const lines = doc.getText().split(/\r?\n/);
 
-    // Get feature name
-    let featureName = path.basename(fileUri.fsPath);
-    for (const line of lines) {
-      const match = line.match(/^\s*(Feature|功能)\s*:\s*(.+)/);
-      if (match) {
-        featureName = match[2].trim();
+    let featureName = fileUri.path.split('/').pop() ?? fileUri.fsPath;
+    for (let i = 0; i < lines.length; i++) {
+      const title = parseFeatureLine(lines[i], dialect);
+      if (title !== undefined) {
+        featureName = title || featureName;
         break;
       }
     }
 
-    const featureItem = this._controller.createTestItem(
-      fileUri.toString(),
-      featureName,
-      fileUri,
-    );
+    const featureItem = this._controller.createTestItem(fileUri.toString(), featureName, fileUri);
     featureItem.canResolveChildren = true;
     this._controller.items.add(featureItem);
 
-    // Find scenarios
-    let isInExamples = false;
+    let inExamples = false;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmed = line.trimStart();
-
-      // Track if we're inside an Examples block (skip those lines)
-      if (/^\s*(Examples|例子)\s*:/.test(trimmed)) {
-        isInExamples = true;
+      const trimmed = lines[i].trimStart();
+      if (/^(Examples|例子)\s*:/i.test(trimmed)) {
+        inExamples = true;
         continue;
       }
-      if (isInExamples) {
+      if (inExamples) {
         if (trimmed.startsWith('|') || trimmed === '') {
           continue;
         }
-        isInExamples = false;
+        inExamples = false;
       }
-
-      const scenarioName = parseScenarioLine(line);
+      const scenarioName = parseScenarioLine(lines[i], dialect);
       if (scenarioName !== undefined) {
-        const testId = `${fileUri.toString()}#scenario:${i}`;
-        const testItem = this._controller.createTestItem(
-          testId,
+        const item = this._controller.createTestItem(
+          `${fileUri.toString()}#scenario:${i}`,
           scenarioName,
           fileUri,
         );
-        testItem.range = new vscode.Range(i, 0, i, line.length);
-        featureItem.children.add(testItem);
+        item.range = new vscode.Range(i, 0, i, lines[i].length);
+        featureItem.children.add(item);
       }
     }
   }
 
-  /**
-   * Refresh a single feature file's test items.
-   */
   private _refreshFeatureFile(doc: vscode.TextDocument): void {
     const existing = this._controller.items.get(doc.uri.toString());
-    if (existing) {
-      existing.children.replace([]);
-      this._addFeatureFileItems(doc.uri, doc);
+    if (!existing) {
+      return;
     }
+    existing.children.replace([]);
+    this._addFeatureFileItems(doc.uri, doc);
   }
 
-  /**
-   * Run tests using pytest.
-   */
   private async _runTests(
     request: vscode.TestRunRequest,
     token: vscode.CancellationToken,
   ): Promise<void> {
+    await ensureBindings();
     const run = this._controller.createTestRun(request);
     const tests = this._collectTests(request);
 
@@ -157,56 +136,81 @@ export class BddTestController {
           break;
         }
         run.started(test);
-        await this._runSingleTest(test, run);
+        await this._runSingle(test, run);
       }
     } finally {
       run.end();
     }
   }
 
-  /**
-   * Debug tests.
-   */
-  private async _debugTests(
-    request: vscode.TestRunRequest,
-    _token: vscode.CancellationToken,
-  ): Promise<void> {
-    const tests = this._collectTests(request);
-    if (tests.length === 0) {
+  private async _runSingle(test: vscode.TestItem, run: vscode.TestRun): Promise<void> {
+    if (!test.uri || !test.range) {
+      run.skipped(test);
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(test.uri);
+    const line = doc.lineAt(test.range.start.line);
+    const dialect = detectDocumentLanguage(doc.getText());
+    const name = parseScenarioLine(line.text, dialect);
+    if (name === undefined) {
+      run.skipped(test);
       return;
     }
 
-    // For debug, run the first test via debugpy
-    const test = tests[0];
-    const testPath = this._buildTestPath(test);
-    if (!testPath) {
+    const bindings = getBindingsForFeature(test.uri.fsPath, name);
+    if (bindings.length === 0) {
+      run.skipped(test);
       return;
     }
-
-    const config = vscode.workspace.getConfiguration('bddFeature');
-    const extraArgs = config.get<string[]>('pytestDebugArgs', []);
-
-    const debugConfig: vscode.DebugConfiguration = {
-      name: 'Python: pytest',
-      type: 'debugpy',
-      request: 'launch',
-      module: 'pytest',
-      args: [testPath, ...extraArgs],
-      justMyCode: true,
-      console: 'integratedTerminal',
-    };
 
     const root = getWorkspaceRoot();
-    if (root) {
-      debugConfig.cwd = root;
+    let allPassed = true;
+    const messages: string[] = [];
+
+    for (const b of bindings) {
+      try {
+        let output: string;
+        let cmd: string[];
+        if (b.lang === 'python') {
+          const pytestCmd = vscode.workspace
+            .getConfiguration('bddFeature')
+            .get<string>('pytestCommand', 'pytest -q');
+          cmd = [...pytestCmd.split(/\s+/), `${b.file.fsPath}::${pytestTestName(name)}`];
+        } else {
+          const cargoCmd = vscode.workspace
+            .getConfiguration('bddFeature')
+            .get<string>('cargoTestCommand', 'cargo test');
+          cmd = [
+            ...cargoCmd.split(/\s+/),
+            '--',
+            '--exact',
+            ...(b.rustTestFnName ? [b.rustTestFnName] : []),
+          ];
+        }
+        output = await exec(cmd, root);
+        // Simple, robust summary heuristics:
+        //   pytest → "1 failed, 2 passed" / "no tests ran";  cargo → "test result: FAILED"
+        const failed =
+          /test result:\s*FAILED/.test(output) ||
+          /[1-9]\d*\s+failed/.test(output) ||
+          /no tests ran|collected\s+0\s+items/.test(output);
+        if (failed) {
+          allPassed = false;
+        }
+        messages.push(output.slice(-4000));
+      } catch (err) {
+        allPassed = false;
+        messages.push(err instanceof Error ? err.message : String(err).slice(0, 4000));
+      }
     }
 
-    await vscode.debug.startDebugging(undefined, debugConfig);
+    if (allPassed) {
+      run.passed(test);
+    } else {
+      run.failed(test, new vscode.TestMessage(messages.join('\n---\n').slice(0, 8000)));
+    }
   }
 
-  /**
-   * Collect all test items from a request.
-   */
   private _collectTests(request: vscode.TestRunRequest): vscode.TestItem[] {
     const tests: vscode.TestItem[] = [];
     const gather = (item: vscode.TestItem) => {
@@ -219,68 +223,24 @@ export class BddTestController {
         tests.push(item);
       }
     };
-
     if (request.include) {
       request.include.forEach(gather);
     } else {
       this._controller.items.forEach(gather);
     }
-
     return tests;
   }
+}
 
-  /**
-   * Run a single test via pytest and update the test run.
-   */
-  private async _runSingleTest(test: vscode.TestItem, run: vscode.TestRun): Promise<void> {
-    const testPath = this._buildTestPath(test);
-    if (!testPath) {
-      run.skipped(test);
-      return;
-    }
-
-    const root = getWorkspaceRoot();
-    const config = vscode.workspace.getConfiguration('bddFeature');
-    const pytestCmd = config.get<string>('pytestCommand', 'pytest -q');
-
-    try {
-      const output = await execAsync(`${pytestCmd} "${testPath}"`, root);
-      const channel = getOutputChannel();
-      channel.appendLine(`\n--- ${test.label} ---`);
-      channel.appendLine(output);
-
-      if (output.includes('passed') && !output.includes('failed')) {
-        run.passed(test);
-      } else if (output.includes('failed') || output.includes('error')) {
-        run.failed(test, new vscode.TestMessage(output));
-      } else if (output.includes('skipped')) {
-        run.skipped(test);
+function exec(command: string[], cwd?: string): Promise<string> {
+  const cp = require('child_process') as typeof import('child_process');
+  return new Promise((resolve, reject) => {
+    cp.exec(command.join(' '), { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error && !stdout) {
+        reject(new Error(stderr || String(error)));
       } else {
-        run.passed(test);
+        resolve(stdout || stderr);
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      run.failed(test, new vscode.TestMessage(msg));
-    }
-  }
-
-  /**
-   * Build a pytest node id from a test item.
-   */
-  private _buildTestPath(test: vscode.TestItem): string | undefined {
-    if (!test.uri) {
-      return undefined;
-    }
-
-    const filePath = test.uri.fsPath;
-    // If this is a scenario item (has range), build the test function name
-    if (test.range) {
-      // Find the corresponding test function
-      // For now, just use the scenario name to build a test name
-      const testName = formatTestName(test.label.toString());
-      return `${filePath}::test_${testName}`;
-    }
-
-    return filePath;
-  }
+    });
+  });
 }

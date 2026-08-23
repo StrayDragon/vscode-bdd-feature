@@ -6,14 +6,19 @@ import { FeatureReferenceProvider } from './referenceProvider';
 import { createStepDefinition } from './createStep';
 import { runScenario, runFile } from './runner';
 import { BddTestController } from './testController';
-import { scanStepDefinitions, registerStepRefreshOnSave } from './steps';
+import {
+  scanStepDefinitions,
+  registerStepRefreshOnSave,
+} from './steps';
+import { ensureBindings } from './bindings';
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('BDD Feature');
   outputChannel.appendLine('BDD Feature extension activating...');
 
-  // ── Step definitions scanning ──
-  scanStepDefinitions();
+  // ── Step definitions & bindings scanning ──
+  void scanStepDefinitions();
+  void ensureBindings();
   registerStepRefreshOnSave(context.subscriptions);
 
   // ── Definition Provider ──
@@ -24,12 +29,12 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  // ── Completion Provider (trigger on typing for keyword & step suggestions) ──
+  // ── Completion Provider ──
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       { language: 'feature', scheme: 'file' },
       new FeatureCompletionProvider(),
-      ' ', // trigger on space (after keyword)
+      ' ',
     ),
   );
 
@@ -45,7 +50,11 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Reference Provider ──
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider(
-      [{ language: 'feature', scheme: 'file' }, { language: 'python', scheme: 'file' }],
+      [
+        { language: 'feature', scheme: 'file' },
+        { language: 'python', scheme: 'file' },
+        { language: 'rust', scheme: 'file' },
+      ],
       new FeatureReferenceProvider(),
     ),
   );
@@ -73,6 +82,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('bddFeature.refreshSteps', async () => {
       await scanStepDefinitions();
+      await ensureBindings();
       vscode.window.showInformationMessage('BDD step definitions refreshed');
     }),
   );

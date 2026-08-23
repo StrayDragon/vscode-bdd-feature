@@ -1,160 +1,198 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { parseScenarioLine, formatTestName } from './gherkin';
-import { execAsync, getWorkspaceRoot, getOutputChannel } from './utils';
+import { parseScenarioLine, detectDocumentLanguage, resolveInheritedStepType } from './gherkin';
+import { pytestTestName } from './testNames';
+import { ensureBindings, getBindingsForFeature } from './bindings';
+import { getWorkspaceRoot } from './utils';
 
-/**
- * Run or debug the current scenario from a .feature file.
- */
+interface ScenarioContext {
+  scenarioName: string;
+  featurePath: string;
+}
+
+/** Locate the enclosing scenario of the cursor in a .feature document. */
+export function findEnclosingScenario(
+  document: vscode.TextDocument,
+  cursorLine: number,
+): ScenarioContext | undefined {
+  const dialect = detectDocumentLanguage(document.getText());
+  for (let i = cursorLine; i >= 0; i--) {
+    const name = parseScenarioLine(document.lineAt(i).text, dialect);
+    if (name !== undefined) {
+      return { scenarioName: name, featurePath: document.uri.fsPath };
+    }
+  }
+  return undefined;
+}
+
+/** Run or debug the current scenario. */
 export async function runScenario(debug = false): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'feature') {
     return;
   }
 
-  const document = editor.document;
-  const cursorLine = editor.selection.start.line;
-
-  // Walk upward to find the Scenario line
-  let scenarioLine: string | undefined;
-  let scenarioLineNumber = cursorLine;
-  for (let i = cursorLine; i >= 0; i--) {
-    const lineText = document.lineAt(i).text;
-    const scenarioName = parseScenarioLine(lineText);
-    if (scenarioName !== undefined) {
-      scenarioLine = lineText;
-      scenarioLineNumber = i;
-      break;
-    }
-  }
-
-  if (!scenarioLine) {
+  const ctx = findEnclosingScenario(editor.document, editor.selection.start.line);
+  if (!ctx) {
     vscode.window.showWarningMessage('No Scenario found above cursor position');
     return;
   }
 
-  const scenarioName = parseScenarioLine(scenarioLine);
-  if (!scenarioName) {
+  await ensureBindings();
+  const bindings = getBindingsForFeature(ctx.featurePath, ctx.scenarioName);
+  if (bindings.length === 0) {
+    vscode.window.showWarningMessage(
+      `No binding found for "${ctx.scenarioName}". ` +
+        `Add scenarios("...") (Python) or #[scenario(...)] (Rust) first.`,
+    );
     return;
   }
 
-  // Find the test Python file that corresponds to this feature
-  const featurePath = document.uri.fsPath;
-  const featureDir = path.dirname(featurePath);
-  const featureBasename = path.basename(featurePath, '.feature');
-
-  // Look for test_*.py in common patterns
-  const searchPatterns = [
-    // Same directory
-    path.join(featureDir, `test_${featureBasename}.py`),
-    // Parent directory
-    path.join(featureDir, '..', `test_${featureBasename}.py`),
-    // Sibling test directory
-    path.join(featureDir, '..', 'test', `test_${featureBasename}.py`),
-  ];
-
-  // Also search in workspace
-  const wsPatterns = [
-    `**/test_${featureBasename}.py`,
-  ];
-
-  let testFilePath: string | undefined;
-
-  // Check direct paths first
-  for (const p of searchPatterns) {
-    try {
-      const uri = vscode.Uri.file(p);
-      await vscode.workspace.openTextDocument(uri);
-      testFilePath = p;
-      break;
-    } catch {
-      // File doesn't exist
+  for (const binding of bindings) {
+    if (binding.lang === 'python') {
+      await runPythonBinding(binding, ctx, debug);
+    } else {
+      await runRustBinding(binding, debug);
     }
-  }
-
-  // If not found, search workspace
-  if (!testFilePath) {
-    const found = await vscode.workspace.findFiles(`**/test_${featureBasename}.py`, '**/__pycache__/**');
-    if (found.length > 0) {
-      testFilePath = found[0].fsPath;
-    }
-  }
-
-  if (!testFilePath) {
-    vscode.window.showWarningMessage(`No test file found for feature: ${featureBasename}.feature`);
-    return;
-  }
-
-  // Build pytest node id
-  const testName = formatTestName(scenarioName);
-  const testNode = `${testFilePath}::test_${testName}`;
-
-  if (debug) {
-    await _debugTest(testNode);
-  } else {
-    await _runTest(testNode);
   }
 }
 
-/**
- * Run or debug the current file.
- */
+/** Run or debug the whole file (delegates by language of active editor). */
 export async function runFile(debug = false): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     return;
   }
+  const fsPath = editor.document.uri.fsPath;
 
-  const filePath = editor.document.uri.fsPath;
-  if (debug) {
-    await _debugTest(filePath);
-  } else {
-    await _runTest(filePath);
+  if (editor.document.languageId === 'feature') {
+    await ensureBindings();
+    // Run every distinct binding file that references this feature.
+    const all = getBindingsForFeature(fsPath);
+    const seen = new Set<string>();
+    let any = false;
+    for (const b of all) {
+      if (seen.has(b.file.fsPath)) {
+        continue;
+      }
+      seen.add(b.file.fsPath);
+      any = true;
+      if (b.lang === 'python') {
+        await _runInTerminal(pythonCommand(), `"${b.file.fsPath}"`);
+      } else {
+        const target = rustTargetFor(b.file.fsPath);
+        await _runInTerminal(cargoCommand(), target ? ` --test ${target}` : '');
+      }
+    }
+    if (!any) {
+      vscode.window.showWarningMessage('No test binding found for this feature file');
+    }
+    return;
+  }
+
+  if (editor.document.languageId === 'python' && debug) {
+    await debugPytest(`"${fsPath}"`);
+  } else if (editor.document.languageId === 'python') {
+    await _runInTerminal(pythonCommand(), `"${fsPath}"`);
+  } else if (editor.document.languageId === 'rust') {
+    await _runInTerminal(cargoCommand(), '');
   }
 }
 
-/**
- * Run a pytest command in the terminal.
- */
-async function _runTest(testPath: string): Promise<void> {
-  const root = getWorkspaceRoot();
-  const config = vscode.workspace.getConfiguration('bddFeature');
-  const pytestCmd = config.get<string>('pytestCommand', 'pytest -q');
+// ── Python ──
 
-  // Get or create terminal
+function pythonCommand(): string {
+  return vscode.workspace.getConfiguration('bddFeature').get<string>('pytestCommand', 'pytest -q');
+}
+
+async function runPythonBinding(
+  binding: import('./model').FeatureBinding,
+  ctx: ScenarioContext,
+  debug: boolean,
+): Promise<void> {
+  const relFile = path.relative(getWorkspaceRoot() ?? '', binding.file.fsPath);
+  const testName = pytestTestName(ctx.scenarioName);
+  const nodeId = `${relFile}::${testName}`;
+
+  if (debug) {
+    await debugPytest(nodeId);
+    return;
+  }
+  // Exact node id also collects all parametrized outline variants.
+  await _runInTerminal(pythonCommand(), `"${nodeId}"`);
+}
+
+async function debugPytest(targetArg: string): Promise<void> {
+  const extraArgs = vscode.workspace
+    .getConfiguration('bddFeature')
+    .get<string[]>('pytestDebugArgs', []);
+  const root = getWorkspaceRoot();
+  const config: vscode.DebugConfiguration = {
+    name: 'Python: pytest-bdd',
+    type: 'debugpy',
+    request: 'launch',
+    module: 'pytest',
+    args: [targetArg, ...extraArgs],
+    justMyCode: true,
+    console: 'integratedTerminal',
+  };
+  if (root) {
+    config.cwd = root;
+  }
+  await vscode.debug.startDebugging(undefined, config);
+}
+
+// ── Rust ──
+
+function cargoCommand(): string {
+  return vscode.workspace
+    .getConfiguration('bddFeature')
+    .get<string>('cargoTestCommand', 'cargo test');
+}
+
+/** Infer the integration-test target from a tests/ path layout. */
+export function rustTargetFor(bindingFsPath: string): string | undefined {
+  const parts = bindingFsPath.split('/');
+  const testsIdx = parts.lastIndexOf('tests');
+  if (testsIdx === -1) {
+    return undefined;
+  }
+  const rest = parts.slice(testsIdx + 1);
+  if (rest.length === 1) {
+    return rest[0].replace(/\.rs$/, ''); // tests/foo.rs → target foo
+  }
+  return rest[0]; // tests/bdd/bindings_x.rs → target bdd (main.rs)
+}
+
+async function runRustBinding(
+  binding: import('./model').FeatureBinding,
+  debug: boolean,
+): Promise<void> {
+  if (!binding.rustTestFnName) {
+    return;
+  }
+  const target = rustTargetFor(binding.file.fsPath);
+  const cmd = cargoCommand();
+  const args = target ? ` --test ${target} ${binding.rustTestFnName}` : ` ${binding.rustTestFnName}`;
+  if (debug) {
+    vscode.window.showInformationMessage(
+      'Rust BDD debugging: use CodeLLDB on the cargo test binary; running without debugger.',
+    );
+  }
+  await _runInTerminal(cmd, args);
+}
+
+// ── Shared ──
+
+async function _runInTerminal(command: string, args: string): Promise<void> {
+  const root = getWorkspaceRoot();
   let terminal = vscode.window.terminals.find(t => t.name === 'BDD Test');
   if (!terminal) {
     terminal = vscode.window.createTerminal('BDD Test');
   }
-
   terminal.show(true);
   if (root) {
     terminal.sendText(`cd "${root}"`);
   }
-  terminal.sendText(`${pytestCmd} "${testPath}"`);
-}
-
-/**
- * Debug a test using VS Code's Python debugger.
- */
-async function _debugTest(testPath: string): Promise<void> {
-  const root = getWorkspaceRoot();
-  const config = vscode.workspace.getConfiguration('bddFeature');
-  const extraArgs = config.get<string[]>('pytestDebugArgs', []);
-
-  const debugConfig: vscode.DebugConfiguration = {
-    name: 'Python: pytest',
-    type: 'debugpy',
-    request: 'launch',
-    module: 'pytest',
-    args: [testPath, ...extraArgs],
-    justMyCode: true,
-    console: 'integratedTerminal',
-  };
-
-  if (root) {
-    debugConfig.cwd = root;
-  }
-
-  await vscode.debug.startDebugging(undefined, debugConfig);
+  terminal.sendText(`${command} ${args}`.trim());
 }

@@ -1,11 +1,16 @@
 import * as vscode from 'vscode';
-import { parseStepLine, getStepType, parseScenarioLine } from './gherkin';
+import { parseStepLine, parseScenarioLine, detectDocumentLanguage } from './gherkin';
+import { getStepDefinitions, scanStepDefinitions } from './steps';
+import { stepMatchesDefinition } from './matching';
 
 /**
- * Provides Find References for .feature steps and Python step decorators.
+ * Find References.
  *
- * From a .feature file: finds all other .feature files using the same step.
- * From a Python file: finds all .feature files referencing that step.
+ * - From a .feature step: other feature files using the SAME definition
+ *   (parametric patterns included — all steps resolving to any matching
+ *   definition are listed).
+ * - From a Python decorator / Rust attribute: every feature step that
+ *   resolves to that definition.
  */
 export class FeatureReferenceProvider implements vscode.ReferenceProvider {
   async provideReferences(
@@ -14,107 +19,103 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
     context: vscode.ReferenceContext,
     _token: vscode.CancellationToken,
   ): Promise<vscode.Location[]> {
+    const dialect = detectDocumentLanguage(document.getText());
+    const line = document.lineAt(position.line);
+
+    // ── Origin is a feature file ──
     if (document.languageId === 'feature') {
-      return this._findFeatureReferences(document, position, context);
+      const parsed = parseStepLine(line.text, dialect);
+      if (!parsed) {
+        return [];
+      }
+      await scanStepDefinitions();
+      const originDefs = getStepDefinitions().filter(
+        d => stepMatchesDefinition(parsed.text, d) &&
+          (d.type === 'step' || !parsed.type || d.type === parsed.type),
+      );
+      return this._findFeatureUsages(parsed.text, parsed.type, originDefs, document.uri, context.includeDeclaration);
     }
-    if (document.languageId === 'python') {
-      return this._findPythonReferences(document, position, context);
+
+    // ── Origin is a definition file ──
+    if (document.languageId === 'python' || document.languageId === 'rust') {
+      await scanStepDefinitions();
+      const defsHere = getStepDefinitions().filter(d =>
+        d.file.fsPath === document.uri.fsPath &&
+        (d.decoratorLine === position.line ||
+          d.functionLine === position.line),
+      );
+      if (defsHere.length === 0) {
+        return [];
+      }
+      return this._findFeatureUsagesForDefs(defsHere, context.includeDeclaration);
     }
+
     return [];
   }
 
-  /**
-   * Find all usages of a step across feature files.
-   */
-  private async _findFeatureReferences(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    context: vscode.ReferenceContext,
+  /** All feature steps matching ANY of the given definitions. */
+  private async _findFeatureUsagesForDefs(
+    defs: readonly StepDefinitionLite[],
+    includeDecl: boolean,
   ): Promise<vscode.Location[]> {
-    const line = document.lineAt(position.line);
-    const stepInfo = parseStepLine(line.text);
-    if (!stepInfo) {
-      return [];
-    }
-
     const results: vscode.Location[] = [];
-
-    // Include the declaration if requested
-    if (context.includeDeclaration) {
-      results.push(new vscode.Location(document.uri, position));
+    for (const def of defs) {
+      results.push(...(await this._findFeatureUsages(def.text, typeOf(def), [def], undefined, includeDecl)));
     }
-
-    // Search all feature files
-    const featureFiles = await vscode.workspace.findFiles('**/*.feature');
-    for (const fileUri of featureFiles) {
-      if (fileUri.fsPath === document.uri.fsPath) {
-        continue;
-      }
-
-      try {
-        const doc = await vscode.workspace.openTextDocument(fileUri);
-        const text = doc.getText();
-        const lines = text.split(/\r?\n/);
-
-        for (let i = 0; i < lines.length; i++) {
-          const otherStep = parseStepLine(lines[i]);
-          if (otherStep && otherStep.text === stepInfo.text) {
-            results.push(new vscode.Location(fileUri, new vscode.Position(i, 0)));
-          }
-        }
-      } catch {
-        // Skip unreadable files
-      }
-    }
-
     return results;
   }
 
   /**
-   * Find all feature file references from a Python step decorator.
+   * Scan all .feature files for steps that resolve to one of `originDefs`
+   * (or whose text matches `stepText` when no definitions exist yet).
    */
-  private async _findPythonReferences(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    _context: vscode.ReferenceContext,
+  private async _findFeatureUsages(
+    stepText: string,
+    stepType: 'given' | 'when' | 'then' | 'step' | undefined,
+    originDefs: readonly StepDefinitionLite[],
+    excludeUri: vscode.Uri | undefined,
+    includeDeclaration: boolean,
   ): Promise<vscode.Location[]> {
-    const line = document.lineAt(position.line);
-    const trimmed = line.text.trim();
-
-    // Check if we're on a @given/@when/@then decorator
-    const decoratorMatch = trimmed.match(/^@(given|when|then|step)\s*\(/);
-    if (!decoratorMatch) {
-      return [];
-    }
-
-    // Extract the step text from the decorator
-    const fullLine = trimmed;
-    const strMatch = fullLine.match(/(?:Parser\s*\()?(?:r?["'])(.+?)(?:["'])/);
-    if (!strMatch) {
-      return [];
-    }
-
-    const stepText = strMatch[1].toLowerCase();
+    void stepType;
     const results: vscode.Location[] = [];
+    const featureFiles = await vscode.workspace.findFiles('**/*.feature', '**/{node_modules,target}/**', 3000);
 
-    // Search all feature files for matching steps
-    const featureFiles = await vscode.workspace.findFiles('**/*.feature');
     for (const fileUri of featureFiles) {
       try {
         const doc = await vscode.workspace.openTextDocument(fileUri);
-        const lines = doc.getText().split(/\r?\n/);
-
-        for (let i = 0; i < lines.length; i++) {
-          const stepInfo = parseStepLine(lines[i]);
-          if (stepInfo && stepInfo.text.toLowerCase() === stepText) {
-            results.push(new vscode.Location(fileUri, new vscode.Position(i, 0)));
+        const dialect = detectDocumentLanguage(doc.getText());
+        for (let i = 0; i < doc.lineCount; i++) {
+          const text = doc.lineAt(i).text;
+          const parsed = parseStepLine(text, dialect);
+          if (!parsed) {
+            continue;
+          }
+          const matches =
+            originDefs.length > 0
+              ? originDefs.some(def => stepMatchesDefinition(parsed.text, def))
+              : parsed.text === stepText;
+          if (matches && !(fileUri.fsPath === excludeUri?.fsPath)) {
+            results.push(new vscode.Location(fileUri, new vscode.Range(i, 0, i, text.length)));
           }
         }
+        // Scenario header references to the same file's binding? skip —
+        // definition-level references only.
+        void parseScenarioLine;
       } catch {
-        // Skip unreadable files
+        // skip unreadable
       }
     }
 
+    if (includeDeclaration && excludeUri) {
+      // The declaration for a feature-step query is the step line itself.
+      results.unshift(new vscode.Location(excludeUri, new vscode.Range(0, 0, 0, 0)));
+    }
     return results;
   }
+}
+
+type StepDefinitionLite = import('./model').StepDefinition;
+
+function typeOf(def: StepDefinitionLite): 'given' | 'when' | 'then' | 'step' | undefined {
+  return def.type;
 }

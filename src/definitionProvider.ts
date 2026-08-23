@@ -1,60 +1,115 @@
 import * as vscode from 'vscode';
-import { parseStepLine, getStepType } from './gherkin';
+import {
+  parseStepLine,
+  parseScenarioLine,
+  detectDocumentLanguage,
+  resolveInheritedStepType,
+} from './gherkin';
 import { findMatchingSteps } from './steps';
+import { getBindingsForFeature, ensureBindings } from './bindings';
+import type { StepDefinition } from './model';
 
 /**
- * Provides Go to Definition for .feature file steps.
- * Navigates from a step line in a .feature file to the corresponding
- * Python step definition decorated with @given/@when/@then.
+ * Go to Definition for .feature files.
+ *
+ * - Step lines → the step-definition decorator/attribute. Jumps land precisely
+ *   on the pattern text (targetSelectionRange), not at column 0.
+ * - Scenario headers → the binding site (Python `scenarios()` call or Rust
+ *   `#[scenario]` attribute).
  */
 export class FeatureDefinitionProvider implements vscode.DefinitionProvider {
   async provideDefinition(
     document: vscode.TextDocument,
     position: vscode.Position,
     _token: vscode.CancellationToken,
-  ): Promise<vscode.Definition | vscode.LocationLink[]> {
+  ): Promise<vscode.LocationLink[]> {
+    const dialect = detectDocumentLanguage(document.getText());
     const line = document.lineAt(position.line);
-    const stepInfo = parseStepLine(line.text);
+    const parsed = parseStepLine(line.text, dialect);
 
-    if (!stepInfo) {
-      return [];
+    if (!parsed) {
+      const scenarioName = parseScenarioLine(line.text, dialect);
+      if (!scenarioName) {
+        return [];
+      }
+      await ensureBindings();
+      return this._scenarioBindingLinks(document.uri.fsPath, scenarioName, line);
     }
 
-    // Determine the step type, handling And/But/* inheritance
-    let stepType = getStepType(stepInfo.keyword);
-    if (!stepType) {
-      // And/But/* — inherit from the previous step
-      stepType = this._getPreviousStepType(document, position.line);
-    }
+    const stepType =
+      parsed.type ??
+      resolveInheritedStepType(n => document.lineAt(n).text, position.line, dialect);
 
-    const matches = findMatchingSteps(stepInfo.text, stepType);
+    const matches = findMatchingSteps(parsed.text, stepType);
     if (matches.length === 0) {
       return [];
     }
 
-    // Return the first match (or all if multiple)
-    return matches.map(def => new vscode.Location(def.file, new vscode.Position(def.line, 0)));
+    const origin = this._originRange(line, parsed.keyword);
+    return matches.map(def => this._toLocationLink(def, origin));
   }
 
-  /**
-   * Walk backwards from the current line to find the last explicit Given/When/Then keyword.
-   */
-  private _getPreviousStepType(document: vscode.TextDocument, currentLine: number): 'given' | 'when' | 'then' | undefined {
-    for (let i = currentLine - 1; i >= 0; i--) {
-      const lineText = document.lineAt(i).text;
-      const stepInfo = parseStepLine(lineText);
-      if (stepInfo) {
-        const type = getStepType(stepInfo.keyword);
-        if (type) {
-          return type;
-        }
-        // Continue if it's And/But/*
-      }
-      // Stop at structural keywords
-      if (/^\s*(Feature|功能|Scenario\s*Outline|场景大纲|剧本大纲|Scenario|场景|剧本|Background|背景|Rule|规则)\s*:/i.test(lineText)) {
-        break;
-      }
+  private _toLocationLink(
+    def: StepDefinition,
+    origin: vscode.Range | undefined,
+  ): vscode.LocationLink {
+    const sel = def.patternSelection;
+    const targetSelectionRange = sel
+      ? new vscode.Range(
+          new vscode.Position(sel.startLine, sel.startCol),
+          new vscode.Position(sel.endLine, sel.endCol),
+        )
+      : new vscode.Range(
+          new vscode.Position(def.decoratorLine, 0),
+          new vscode.Position(def.decoratorLine + 1, 0),
+        );
+    const targetRange = new vscode.Range(
+      new vscode.Position(def.decoratorLine, 0),
+      new vscode.Position((def.functionLine ?? def.decoratorLine) + 3, 0),
+    );
+    return {
+      targetUri: def.file,
+      targetRange,
+      targetSelectionRange,
+      originSelectionRange: origin,
+    };
+  }
+
+  /** Range of the step text after the keyword in the feature file. */
+  private _originRange(line: vscode.TextLine, keyword: string): vscode.Range | undefined {
+    const idx = line.text.indexOf(keyword);
+    if (idx === -1) {
+      return undefined;
     }
-    return undefined;
+    const after = line.text.slice(idx + keyword.length);
+    const ws = after.length - after.trimStart().length;
+    const start = idx + keyword.length + ws;
+    const end = start + after.trim().length;
+    return new vscode.Range(
+      new vscode.Position(line.lineNumber, start),
+      new vscode.Position(line.lineNumber, end),
+    );
+  }
+
+  private async _scenarioBindingLinks(
+    featureFsPath: string,
+    scenarioName: string,
+    headerLine: vscode.TextLine,
+  ): Promise<vscode.LocationLink[]> {
+    const bindings = getBindingsForFeature(featureFsPath, scenarioName);
+    if (bindings.length === 0) {
+      return [];
+    }
+    return bindings.map(b => ({
+      targetUri: b.file,
+      targetRange: new vscode.Range(
+        new vscode.Position(b.line, 0),
+        new vscode.Position(b.line + 2, 0),
+      ),
+      targetSelectionRange: new vscode.Range(
+        new vscode.Position(b.line, 0),
+        new vscode.Position(b.line, Number.MAX_SAFE_INTEGER),
+      ),
+    }));
   }
 }

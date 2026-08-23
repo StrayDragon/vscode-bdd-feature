@@ -1,166 +1,143 @@
 import * as vscode from 'vscode';
-import { normalizeDecorator, stepMatchesDefinition } from './gherkin';
+import type { StepDefinition, StepType } from './model';
+import { extractPythonStepDefs } from './scanners/pythonSteps';
+import { extractRustStepDefs } from './scanners/rustSteps';
+import { findMatches } from './matching';
 
 /**
- * Represents a step definition found in a Python file.
+ * Cache of all discovered step definitions across languages
+ * (pytest-bdd in Python, rstest-bdd in Rust).
  */
-export interface StepDefinition {
-  /** The keyword type: given, when, then, or step (any) */
-  type: 'given' | 'when' | 'then' | 'step';
-  /** The step description text (extracted from decorator) */
-  text: string;
-  /** The file URI */
-  file: vscode.Uri;
-  /** The line number of the decorator */
-  line: number;
-}
 
-/**
- * Cache of all discovered step definitions.
- */
 let _stepDefinitions: StepDefinition[] = [];
 let _stepFiles: vscode.Uri[] = [];
+let _scanPromise: Promise<StepDefinition[]> | undefined;
+
+/** Directories never worth scanning for step definitions. */
+const SCAN_EXCLUDE = '**/{node_modules,target,dist,out,.git,.venv,venv,__pycache__,.cargo}/**';
+const PY_GLOBS = ['**/*step*.py', '**/test_*.py'];
+const RS_GLOBS = ['**/*.rs'];
 
 /**
- * Scan all Python step definition files for @given/@when/@then decorators.
- * Looks in step_defs and steps directories.
+ * Scan the workspace for Python and Rust BDD step definitions.
+ * Concurrent calls share one in-flight scan; results are cached.
  */
-export async function scanStepDefinitions(): Promise<StepDefinition[]> {
+export function scanStepDefinitions(): Promise<StepDefinition[]> {
+  if (_scanPromise) {
+    return _scanPromise;
+  }
+  _scanPromise = doScan().finally(() => {
+    _scanPromise = undefined;
+  });
+  return _scanPromise;
+}
+
+async function doScan(): Promise<StepDefinition[]> {
   const defs: StepDefinition[] = [];
-  const files: vscode.Uri[] = [];
+  const files = new Map<string, vscode.Uri>();
 
-  // Scan multiple common patterns
-  const patterns = [
-    '**/step_defs/**/*.py',
-    '**/steps/**/*.py',
-    '**/step_definitions/**/*.py',
-  ];
-
-  for (const pattern of patterns) {
-    const found = await vscode.workspace.findFiles(pattern, '**/__pycache__/**');
-    for (const file of found) {
-      if (files.some(f => f.fsPath === file.fsPath)) {
-        continue; // deduplicate
+  const pyUris = await findFilesUnique(PY_GLOBS);
+  for (const uri of pyUris) {
+    files.set(uri.fsPath, uri);
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      for (const d of extractPythonStepDefs(doc.getText())) {
+        defs.push({ ...d, lang: 'python', file: uri });
       }
-      files.push(file);
+    } catch {
+      // unreadable file — skip
+    }
+  }
 
-      try {
-        const doc = await vscode.workspace.openTextDocument(file);
-        const text = doc.getText();
-        const lines = text.split(/\r?\n/);
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          const trimmed = line.trim();
-
-          // Match @given(...), @when(...), @then(...), @step(...)
-          const decoratorMatch = trimmed.match(/^@(given|when|then|step)\s*\(/);
-          if (!decoratorMatch) {
-            continue;
-          }
-
-          const keywordType = decoratorMatch[1] as 'given' | 'when' | 'then' | 'step';
-
-          // Collect the full decorator text (may span multiple lines)
-          let fullDecorator = trimmed;
-          let parenDepth = 0;
-          for (let j = i; j < lines.length; j++) {
-            for (const ch of lines[j]) {
-              if (ch === '(') {
-                parenDepth++;
-              } else if (ch === ')') {
-                parenDepth--;
-              }
-            }
-            if (j > i) {
-              fullDecorator += ' ' + lines[j].trim();
-            }
-            if (parenDepth <= 0) {
-              break;
-            }
-          }
-
-          const stepText = normalizeDecorator(fullDecorator);
-          if (stepText) {
-            defs.push({
-              type: keywordType,
-              text: stepText,
-              file: file,
-              line: i,
-            });
-          }
-        }
-      } catch {
-        // Skip files that can't be read
+  const rsUris = await findFilesUnique(RS_GLOBS);
+  for (const uri of rsUris) {
+    // Skip generated/build artifacts that slip past exclude globs
+    const p = uri.fsPath;
+    if (/[/\\](target|out|dist)[/\\]/.test(p)) {
+      continue;
+    }
+    files.set(uri.fsPath, uri);
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      for (const d of extractRustStepDefs(doc.getText())) {
+        defs.push({ ...d, lang: 'rust', file: uri });
       }
+    } catch {
+      // skip
     }
   }
 
   _stepDefinitions = defs;
-  _stepFiles = files;
+  _stepFiles = [...files.values()];
   return defs;
 }
 
-/**
- * Get cached step definitions.
- */
+async function findFilesUnique(globs: string[]): Promise<vscode.Uri[]> {
+  const seen = new Set<string>();
+  const out: vscode.Uri[] = [];
+  for (const g of globs) {
+    const found = await vscode.workspace.findFiles(g, SCAN_EXCLUDE, 2000);
+    for (const f of found) {
+      if (!seen.has(f.fsPath)) {
+        seen.add(f.fsPath);
+        out.push(f);
+      }
+    }
+  }
+  return out;
+}
+
+/** Cached definitions (may be empty before first scan). */
 export function getStepDefinitions(): StepDefinition[] {
   return _stepDefinitions;
 }
 
-/**
- * Get cached step files.
- */
 export function getStepFiles(): vscode.Uri[] {
   return _stepFiles;
 }
 
-/**
- * Find step definitions that match a given feature step text and optional type.
- */
+/** Find definitions matching a feature step text and optional type. */
 export function findMatchingSteps(
   featureStepText: string,
   stepType?: 'given' | 'when' | 'then',
 ): StepDefinition[] {
-  return _stepDefinitions.filter(def => {
-    // If def is 'step' type, it matches any keyword
-    if (def.type !== 'step' && stepType && def.type !== stepType) {
-      return false;
-    }
-    return stepMatchesDefinition(featureStepText, def.text);
-  });
+  return findMatches(_stepDefinitions, featureStepText, stepType);
 }
 
-/**
- * Find step definitions whose text starts with or contains the given prefix.
- * Used for auto-completion.
- */
+/** Prefix/substring candidates for completion. */
 export function findCompletionCandidates(
   prefix: string,
-  stepType?: 'given' | 'when' | 'then',
+  stepType?: StepType | undefined,
 ): StepDefinition[] {
-  const lowerPrefix = prefix.toLowerCase();
+  const lower = prefix.toLowerCase();
   return _stepDefinitions.filter(def => {
     if (def.type !== 'step' && stepType && def.type !== stepType) {
       return false;
     }
-    return def.text.toLowerCase().startsWith(lowerPrefix) ||
-           def.text.toLowerCase().includes(lowerPrefix);
+    const t = def.text.toLowerCase();
+    return t.startsWith(lower) || t.includes(lower) || prefix.length === 0;
   });
 }
 
 /**
- * Register file save listener to auto-refresh step definitions.
+ * Refresh on save: any Python or Rust file save triggers a debounced rescan.
  */
 export function registerStepRefreshOnSave(disposables: vscode.Disposable[]): void {
+  let timer: NodeJS.Timeout | undefined;
   disposables.push(
-    vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      if (doc.languageId === 'python' && doc.uri.fsPath.includes('step')) {
-        await scanStepDefinitions();
+    vscode.workspace.onDidSaveTextDocument(doc => {
+      if (doc.languageId !== 'python' && doc.languageId !== 'rust') {
+        return;
       }
-      if (doc.languageId === 'feature') {
-        await scanStepDefinitions();
+      if (timer) {
+        clearTimeout(timer);
       }
+      timer = setTimeout(() => {
+        void scanStepDefinitions();
+      }, 300);
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void scanStepDefinitions();
     }),
   );
 }
