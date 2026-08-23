@@ -200,6 +200,86 @@
           "type": "string",
           "default": null,
           "description": "Base directory for .feature paths in scenarios() calls (mirrors pytest-bdd's bdd_features_base_dir ini). Defaults to each binding file's directory."
+        },
+        "bddFeature.enableDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report problems for .feature and step-definition files"
+        },
+        "bddFeature.diagnostics.undefinedSteps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn about steps without any matching definition"
+        },
+        "bddFeature.diagnostics.duplicateDefinitions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Info-mark step definitions whose text duplicates another"
+        },
+        "bddFeature.diagnostics.unusedDefinitions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hint step definitions never referenced by any feature"
+        },
+        "bddFeature.diagnostics.unboundFeatures": {
+          "type": "boolean",
+          "default": false,
+          "description": "Warn when a feature file has no scenarios()/#[scenario] binding"
+        },
+        "bddFeature.enableCodeActions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer quick fixes (create missing step, bind feature)"
+        },
+        "bddFeature.enableCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show runnable lenses above scenarios and usage counts above definitions"
+        },
+        "bddFeature.codeLens.runScenarios": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run/Debug lenses above scenario headers"
+        },
+        "bddFeature.codeLens.usages": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reference-count lenses above step definitions (Python/Rust)"
+        },
+        "bddFeature.enableDocumentSymbols": {
+          "type": "boolean",
+          "default": true,
+          "description": "Provide Outline/Breadcrumbs structure for .feature files"
+        },
+        "bddFeature.enableWorkspaceSymbols": {
+          "type": "boolean",
+          "default": true,
+          "description": "Index scenarios and step definitions for Ctrl+P # search"
+        },
+        "bddFeature.enableFoldingRanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow folding scenarios/rules/docstrings in .feature files"
+        },
+        "bddFeature.enableHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hover cards for steps (definition preview) and scenarios (run command)"
+        },
+        "bddFeature.enableTableFormatting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Align Gherkin table pipes via Format Document/Selection (CJK-width aware)"
+        },
+        "bddFeature.enableRename": {
+          "type": "boolean",
+          "default": true,
+          "description": "Rename exact-match steps across definitions and features; sync Rust scenario names"
+        },
+        "bddFeature.enableSnippets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Gherkin skeleton snippets (scenario/outline/background/rule)"
         }
       }
     },

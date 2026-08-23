@@ -76,7 +76,26 @@ fn configured_mock_model(name: String) {
 
 ### Test Explorer
 
-Native `vscode.TestController`: scenarios per feature file, run individually or per file through discovered bindings.
+Native `vscode.TestController`:
+- **Lazy discovery** — feature nodes resolve scenarios on demand (fast on large repos)
+- **Tags** — each scenario is tagged `python` / `rust` / `unbound`; filter in the UI
+- **Continuous Run** — enable the built-in toggle; watched `.feature/.py/.rs` changes re-run automatically
+
+### Diagnostics, Quick Fixes & UX Mechanisms (each independently toggleable)
+
+| Mechanism | What you get | Toggle |
+|---|---|---|
+| Problems | undefined steps, duplicate/invalid/unused definitions, unbound features (with related-info jumps) | `bddFeature.enableDiagnostics` (+ sub-switches) |
+| Quick Fixes | 💡 create missing step stub; 💡 generate feature binding (`scenarios()` / `#[scenario]`) | `bddFeature.enableCodeActions` |
+| CodeLens | ▶ Run / 🐞 Debug above scenarios, Run All on the feature header, reference counts above definitions | `bddFeature.enableCodeLens` |
+| Outline & Search | Feature→Rule→Scenario document symbols (breadcrumbs), workspace-wide `#` symbol search incl. step patterns | `enableDocumentSymbols` / `enableWorkspaceSymbols` |
+| Folding | fold scenarios/rules/backgrounds/docstrings | `bddFeature.enableFoldingRanges` |
+| Hover | definition preview cards on steps; the exact pytest/cargo command a scenario will run | `bddFeature.enableHover` |
+| Formatting | CJK-width-aware Gherkin table pipe alignment via Format Document/Selection | `bddFeature.enableTableFormatting` |
+| Rename | rename exact-match steps across definition + all features; scenario titles sync Rust `#[scenario(name=…)]` both ways | `bddFeature.enableRename` |
+| Snippets | `feature`/`scenario`/`outline`/`background`/`rule` skeletons at line start | `bddFeature.enableSnippets` |
+
+All toggles live under the `bddFeature.*` configuration section and apply instantly.
 
 ### Find References
 

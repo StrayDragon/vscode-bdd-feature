@@ -25,14 +25,17 @@ export function findEnclosingScenario(
   return undefined;
 }
 
-/** Run or debug the current scenario. */
-export async function runScenario(debug = false): Promise<void> {
+/** Run or debug the scenario at `atLine` (or under the cursor). */
+export async function runScenario(debug = false, atLine?: number): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'feature') {
     return;
   }
 
-  const ctx = findEnclosingScenario(editor.document, editor.selection.start.line);
+  const ctx = findEnclosingScenario(
+    editor.document,
+    atLine ?? editor.selection.start.line,
+  );
   if (!ctx) {
     vscode.window.showWarningMessage('No Scenario found above cursor position');
     return;

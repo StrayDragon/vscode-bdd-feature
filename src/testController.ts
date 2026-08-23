@@ -11,12 +11,16 @@ import { getWorkspaceRoot } from './utils';
 /**
  * VS Code native Test Controller.
  *
- * Discovers scenarios in .feature files and executes them through their
- * discovered bindings (pytest for Python, cargo test for Rust).
+ * - Lazy discovery: feature items resolve children on demand (big-repo perf)
+ * - Tags: python / rust / unbound per scenario, filterable in the UI
+ * - Continuous run: re-executes the last request when watched files change
  */
 export class BddTestController {
   private _controller: vscode.TestController;
   private _disposables: vscode.Disposable[] = [];
+  private _watcher: vscode.FileSystemWatcher | undefined;
+  private _continuousRequest: vscode.TestRunRequest | undefined;
+  private _continuousTimer: NodeJS.Timeout | undefined;
 
   constructor() {
     this._controller = vscode.tests.createTestController(
@@ -25,26 +29,29 @@ export class BddTestController {
     );
 
     this._controller.refreshHandler = () => this.refresh();
+    // Lazy children resolution
+    this._controller.resolveHandler = item =>
+      item ? this._resolveFeatureItem(item) : Promise.resolve();
 
-    this._controller.createRunProfile(
+    const runProfile = this._controller.createRunProfile(
       'Run',
       vscode.TestRunProfileKind.Run,
       (request, token) => this._runTests(request, token),
     );
+    runProfile.supportsContinuousRun = true;
 
     this._disposables.push(
       vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.languageId === 'feature') {
-          this._refreshFeatureFile(doc);
+          void this._reloadFeatureFile(doc);
         }
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => void this.refresh()),
     );
-
-    void this.refresh();
   }
 
   dispose(): void {
+    this._watcher?.dispose();
     this._controller.dispose();
     for (const d of this._disposables) {
       d.dispose();
@@ -63,29 +70,46 @@ export class BddTestController {
     for (const uri of featureFiles) {
       try {
         const doc = await vscode.workspace.openTextDocument(uri);
-        this._addFeatureFileItems(uri, doc);
+        this._addFeatureItem(uri, doc);
       } catch {
         // skip
       }
     }
   }
 
-  private _addFeatureFileItems(fileUri: vscode.Uri, doc: vscode.TextDocument): void {
+  /** Create the feature node without children — resolved lazily. */
+  private _addFeatureItem(fileUri: vscode.Uri, doc: vscode.TextDocument): void {
     const dialect = detectDocumentLanguage(doc.getText());
     const lines = doc.getText().split(/\r?\n/);
 
     let featureName = fileUri.path.split('/').pop() ?? fileUri.fsPath;
     for (let i = 0; i < lines.length; i++) {
       const title = parseFeatureLine(lines[i], dialect);
-      if (title !== undefined) {
-        featureName = title || featureName;
+      if (title !== undefined && title.trim()) {
+        featureName = title;
         break;
       }
     }
 
-    const featureItem = this._controller.createTestItem(fileUri.toString(), featureName, fileUri);
-    featureItem.canResolveChildren = true;
-    this._controller.items.add(featureItem);
+    const item = this._controller.createTestItem(fileUri.toString(), featureName, fileUri);
+    item.canResolveChildren = true;
+    this._controller.items.add(item);
+  }
+
+  /** Populate scenarios under a feature node, tagging by binding language. */
+  private async _resolveFeatureItem(item: vscode.TestItem): Promise<void> {
+    if (!item.uri) {
+      return;
+    }
+    await ensureBindings();
+    try {
+      const doc = await vscode.workspace.openTextDocument(item.uri);
+    } catch {
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(item.uri);
+    const dialect = detectDocumentLanguage(doc.getText());
+    const lines = doc.getText().split(/\r?\n/);
 
     let inExamples = false;
     for (let i = 0; i < lines.length; i++) {
@@ -100,37 +124,47 @@ export class BddTestController {
         }
         inExamples = false;
       }
-      const scenarioName = parseScenarioLine(lines[i], dialect);
-      if (scenarioName !== undefined) {
-        const item = this._controller.createTestItem(
-          `${fileUri.toString()}#scenario:${i}`,
-          scenarioName,
-          fileUri,
-        );
-        item.range = new vscode.Range(i, 0, i, lines[i].length);
-        featureItem.children.add(item);
+      const name = parseScenarioLine(lines[i], dialect);
+      if (name === undefined) {
+        continue;
       }
+      const child = this._controller.createTestItem(
+        `${item.uri.toString()}#scenario:${i}`,
+        name,
+        item.uri,
+      );
+      child.range = new vscode.Range(i, 0, i, lines[i].length);
+      const bindings = getBindingsForFeature(item.uri.fsPath, name);
+      child.tags = [
+        new vscode.TestTag(bindings.some(b => b.lang === 'python') ? 'python' : bindings.some(b => b.lang === 'rust') ? 'rust' : 'unbound'),
+      ];
+      item.children.add(child);
     }
   }
 
-  private _refreshFeatureFile(doc: vscode.TextDocument): void {
+  private async _reloadFeatureFile(doc: vscode.TextDocument): Promise<void> {
     const existing = this._controller.items.get(doc.uri.toString());
     if (!existing) {
       return;
     }
     existing.children.replace([]);
-    this._addFeatureFileItems(doc.uri, doc);
+    await this._resolveFeatureItem(existing);
   }
 
   private async _runTests(
     request: vscode.TestRunRequest,
     token: vscode.CancellationToken,
   ): Promise<void> {
+    if (request.continuous) {
+      this._startContinuous(request);
+      // Fall through to execute once immediately
+    }
+
     await ensureBindings();
     const run = this._controller.createTestRun(request);
-    const tests = this._collectTests(request);
-
+    let tests: vscode.TestItem[] = [];
     try {
+      tests = await this._collectTests(request);
       for (const test of tests) {
         if (token.isCancellationRequested) {
           break;
@@ -141,6 +175,61 @@ export class BddTestController {
     } finally {
       run.end();
     }
+  }
+
+  /** Watch sources and re-run the last continuous request (debounced). */
+  private _startContinuous(request: vscode.TestRunRequest): void {
+    this._continuousRequest = request;
+    if (this._watcher) {
+      return;
+    }
+    this._watcher = vscode.workspace.createFileSystemWatcher('**/*.{feature,py,rs}');
+    const schedule = () => {
+      if (this._continuousTimer) {
+        clearTimeout(this._continuousTimer);
+      }
+      this._continuousTimer = setTimeout(() => {
+        const req = this._continuousRequest;
+        if (req) {
+          const tokenSource = new vscode.CancellationTokenSource();
+          void this._runTests(req, tokenSource.token);
+        }
+      }, 600);
+    };
+    this._disposables.push(this._watcher);
+    for (const evt of [this._watcher.onDidChange, this._watcher.onDidCreate]) {
+      this._disposables.push(evt(schedule));
+    }
+  }
+
+  /** Gather leaves; lazily resolving feature nodes that were never expanded. */
+  private async _collectTests(request: vscode.TestRunRequest): Promise<vscode.TestItem[]> {
+    const tests: vscode.TestItem[] = [];
+    const gather = async (item: vscode.TestItem): Promise<void> => {
+      if (request.exclude?.includes(item)) {
+        return;
+      }
+      if (item.children.size === 0 && item.canResolveChildren) {
+        await this._resolveFeatureItem(item);
+      }
+      if (item.children.size > 0) {
+        for (const [, child] of item.children) {
+          await gather(child);
+        }
+      } else {
+        tests.push(item);
+      }
+    };
+    if (request.include) {
+      for (const inc of request.include) {
+        await gather(inc);
+      }
+    } else {
+      for (const [, item] of this._controller.items) {
+        await gather(item);
+      }
+    }
+    return tests;
   }
 
   private async _runSingle(test: vscode.TestItem, run: vscode.TestRun): Promise<void> {
@@ -168,28 +257,20 @@ export class BddTestController {
     const messages: string[] = [];
 
     for (const b of bindings) {
+      let cmd: string[];
+      if (b.lang === 'python') {
+        const pytestCmd = vscode.workspace
+          .getConfiguration('bddFeature')
+          .get<string>('pytestCommand', 'pytest -q');
+        cmd = [...pytestCmd.split(/\s+/), `${b.file.fsPath}::${pytestTestName(name)}`];
+      } else {
+        const cargoCmd = vscode.workspace
+          .getConfiguration('bddFeature')
+          .get<string>('cargoTestCommand', 'cargo test');
+        cmd = [...cargoCmd.split(/\s+/), '--', '--exact', ...(b.rustTestFnName ? [b.rustTestFnName] : [])];
+      }
       try {
-        let output: string;
-        let cmd: string[];
-        if (b.lang === 'python') {
-          const pytestCmd = vscode.workspace
-            .getConfiguration('bddFeature')
-            .get<string>('pytestCommand', 'pytest -q');
-          cmd = [...pytestCmd.split(/\s+/), `${b.file.fsPath}::${pytestTestName(name)}`];
-        } else {
-          const cargoCmd = vscode.workspace
-            .getConfiguration('bddFeature')
-            .get<string>('cargoTestCommand', 'cargo test');
-          cmd = [
-            ...cargoCmd.split(/\s+/),
-            '--',
-            '--exact',
-            ...(b.rustTestFnName ? [b.rustTestFnName] : []),
-          ];
-        }
-        output = await exec(cmd, root);
-        // Simple, robust summary heuristics:
-        //   pytest → "1 failed, 2 passed" / "no tests ran";  cargo → "test result: FAILED"
+        const output = await exec(cmd, root);
         const failed =
           /test result:\s*FAILED/.test(output) ||
           /[1-9]\d*\s+failed/.test(output) ||
@@ -210,37 +291,22 @@ export class BddTestController {
       run.failed(test, new vscode.TestMessage(messages.join('\n---\n').slice(0, 8000)));
     }
   }
-
-  private _collectTests(request: vscode.TestRunRequest): vscode.TestItem[] {
-    const tests: vscode.TestItem[] = [];
-    const gather = (item: vscode.TestItem) => {
-      if (request.exclude?.includes(item)) {
-        return;
-      }
-      if (item.children.size > 0) {
-        item.children.forEach(gather);
-      } else {
-        tests.push(item);
-      }
-    };
-    if (request.include) {
-      request.include.forEach(gather);
-    } else {
-      this._controller.items.forEach(gather);
-    }
-    return tests;
-  }
 }
 
 function exec(command: string[], cwd?: string): Promise<string> {
   const cp = require('child_process') as typeof import('child_process');
   return new Promise((resolve, reject) => {
-    cp.exec(command.join(' '), { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && !stdout) {
-        reject(new Error(stderr || String(error)));
-      } else {
-        resolve(stdout || stderr);
-      }
-    });
+    cp.execFile(
+      command[0],
+      command.slice(1),
+      { cwd, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error && !stdout) {
+          reject(new Error(stderr || String(error)));
+        } else {
+          resolve(stdout || stderr);
+        }
+      },
+    );
   });
 }
