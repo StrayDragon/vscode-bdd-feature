@@ -2,7 +2,7 @@
 
 import * as vscode from 'vscode';
 
-export type StepLang = 'python' | 'rust';
+export type StepLang = 'python' | 'rust' | 'typescript';
 
 export type StepType = 'given' | 'when' | 'then' | 'step';
 
@@ -12,8 +12,10 @@ export type StepType = 'given' | 'when' | 'then' | 'step';
  *   parse  — Python `parse` format string ({x}, {x:d}, ...)
  *   cfparse— parse + cardinality fields (degrades to parse semantics here)
  *   re     — regular expression
+ *   cexpr  — Cucumber Expression ({string}, {int}, {}, …) used by
+ *            cucumber-js / playwright-bdd string patterns
  */
-export type StepMatcherKind = 'exact' | 'parse' | 'cfparse' | 're';
+export type StepMatcherKind = 'exact' | 'parse' | 'cfparse' | 're' | 'cexpr';
 
 export interface StepDefinition {
   lang: StepLang;

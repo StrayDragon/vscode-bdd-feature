@@ -7,6 +7,12 @@ import {
 import { pytestTestName } from './testNames';
 import { ensureBindings, getBindingsForFeature } from './bindings';
 import { getWorkspaceRoot } from './utils';
+import {
+  detectTsBddRunner,
+  cucumberCommand,
+  playwrightCommand,
+  escapeRegExpLiteral,
+} from './tsBdd';
 
 /**
  * VS Code native Test Controller.
@@ -135,9 +141,18 @@ export class BddTestController {
       );
       child.range = new vscode.Range(i, 0, i, lines[i].length);
       const bindings = getBindingsForFeature(item.uri.fsPath, name);
-      child.tags = [
-        new vscode.TestTag(bindings.some(b => b.lang === 'python') ? 'python' : bindings.some(b => b.lang === 'rust') ? 'rust' : 'unbound'),
-      ];
+      const tsRunner =
+        !bindings.length || bindings.some(b => b.lang === 'typescript')
+          ? await detectTsBddRunner()
+          : undefined;
+      const tag = bindings.some(b => b.lang === 'python')
+        ? 'python'
+        : bindings.some(b => b.lang === 'rust')
+          ? 'rust'
+          : bindings.some(b => b.lang === 'typescript') || tsRunner
+            ? 'typescript'
+            : 'unbound';
+      child.tags = [new vscode.TestTag(tag)];
       item.children.add(child);
     }
   }
@@ -183,7 +198,7 @@ export class BddTestController {
     if (this._watcher) {
       return;
     }
-    this._watcher = vscode.workspace.createFileSystemWatcher('**/*.{feature,py,rs}');
+    this._watcher = vscode.workspace.createFileSystemWatcher('**/*.{feature,py,rs,ts,js}');
     const schedule = () => {
       if (this._continuousTimer) {
         clearTimeout(this._continuousTimer);
@@ -245,36 +260,74 @@ export class BddTestController {
       run.skipped(test);
       return;
     }
+    const root = getWorkspaceRoot();
 
-    const bindings = getBindingsForFeature(test.uri.fsPath, name);
-    if (bindings.length === 0) {
+    // Build one command per binding; empty list → resolve via TS runner.
+    const buildCmds = async (): Promise<string[][]> => {
+      const bindings = getBindingsForFeature(test.uri!.fsPath, name);
+      if (bindings.length === 0) {
+        const runner = await detectTsBddRunner();
+        if (!runner) {
+          return [];
+        }
+        const nameArg = escapeRegExpLiteral(name);
+        return [
+          runner === 'cucumber-js'
+            ? [...cucumberCommand().split(/\s+/), test.uri!.fsPath, '--name', nameArg]
+            : [...playwrightCommand().split(/\s+/), '-g', nameArg],
+        ];
+      }
+      const cmds: string[][] = [];
+      for (const b of bindings) {
+        if (b.lang === 'python') {
+          const pytestCmd = vscode.workspace
+            .getConfiguration('bddFeature')
+            .get<string>('pytestCommand', 'pytest -q');
+          cmds.push([...pytestCmd.split(/\s+/), `${b.file.fsPath}::${pytestTestName(name)}`]);
+        } else if (b.lang === 'rust') {
+          const cargoCmd = vscode.workspace
+            .getConfiguration('bddFeature')
+            .get<string>('cargoTestCommand', 'cargo test');
+          cmds.push([
+            ...cargoCmd.split(/\s+/),
+            '--',
+            '--exact',
+            ...(b.rustTestFnName ? [b.rustTestFnName] : []),
+          ]);
+        } else {
+          // TS binding (jest-cucumber): the runnable unit is the binding file,
+          // executed by the user's jest/vitest — approximate via detected runner.
+          const runner = await detectTsBddRunner();
+          if (!runner) {
+            continue;
+          }
+          const nameArg = escapeRegExpLiteral(name);
+          cmds.push(
+            runner === 'cucumber-js'
+              ? [...cucumberCommand().split(/\s+/), test.uri!.fsPath, '--name', nameArg]
+              : [...playwrightCommand().split(/\s+/), '-g', nameArg],
+          );
+        }
+      }
+      return cmds;
+    };
+
+    const commands = await buildCmds();
+    if (commands.length === 0) {
       run.skipped(test);
       return;
     }
 
-    const root = getWorkspaceRoot();
     let allPassed = true;
     const messages: string[] = [];
-
-    for (const b of bindings) {
-      let cmd: string[];
-      if (b.lang === 'python') {
-        const pytestCmd = vscode.workspace
-          .getConfiguration('bddFeature')
-          .get<string>('pytestCommand', 'pytest -q');
-        cmd = [...pytestCmd.split(/\s+/), `${b.file.fsPath}::${pytestTestName(name)}`];
-      } else {
-        const cargoCmd = vscode.workspace
-          .getConfiguration('bddFeature')
-          .get<string>('cargoTestCommand', 'cargo test');
-        cmd = [...cargoCmd.split(/\s+/), '--', '--exact', ...(b.rustTestFnName ? [b.rustTestFnName] : [])];
-      }
+    for (const cmd of commands) {
       try {
         const output = await exec(cmd, root);
         const failed =
           /test result:\s*FAILED/.test(output) ||
           /[1-9]\d*\s+failed/.test(output) ||
-          /no tests ran|collected\s+0\s+items/.test(output);
+          /no tests ran|collected\s+0\s+items/.test(output) ||
+          /\b\d+\s+passed\b.*\b[1-9]\d*\s+failed\b/.test(output);
         if (failed) {
           allPassed = false;
         }

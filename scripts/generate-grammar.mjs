@@ -74,7 +74,9 @@ const grammar = {
       name: 'keyword.control.language.feature',
     },
     comments: {
-      match: '#.*',
+      // Spec: comments are only permitted at the start of a new line — a '#'
+      // mid-line (step text / table cell) must NOT start a comment.
+      match: '^\\s*#.*$',
       name: 'comment.line.feature',
     },
     tags: {
@@ -110,10 +112,17 @@ const grammar = {
       ],
     },
     docstring: {
-      begin: '"""',
-      end: '"""',
-      beginCaptures: { 0: { name: 'punctuation.definition.string.begin.feature' } },
-      endCaptures: { 0: { name: 'punctuation.definition.string.end.feature' } },
+      // Official Gherkin supports """ and ``` delimiters; an optional content
+      // type ("```json" / '"""markdown') may follow the opening delimiter.
+      begin: '(?:"""|```)[ \\t]*(?:([A-Za-z][\\w.#/-]*)[ \\t]*)?$',
+      beginCaptures: {
+        0: { name: 'punctuation.definition.string.begin.feature' },
+        1: { name: 'storage.type.content-type.feature' },
+      },
+      end: '^\\s*(?:"""|```)',
+      endCaptures: {
+        0: { name: 'punctuation.definition.string.end.feature' },
+      },
       name: 'string.quoted.triple.feature',
     },
     table: {
@@ -148,4 +157,4 @@ const grammar = {
 };
 
 await writeFile(OUT, JSON.stringify(grammar, null, 2) + '\n');
-console.log(`Generated ${OUT.pathname} (${langs.length} languages)`);
+console.log(`Generated ${OUT.pathname} (${Object.keys(langs).length} languages)`);

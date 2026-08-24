@@ -48,7 +48,7 @@
       "name": "keyword.control.language.feature"
     },
     "comments": {
-      "match": "#.*",
+      "match": "^\\s*#.*$",
       "name": "comment.line.feature"
     },
     "tags": {
@@ -84,13 +84,16 @@
       ]
     },
     "docstring": {
-      "begin": "\"\"\"",
-      "end": "\"\"\"",
+      "begin": "(?:\"\"\"|```)[ \\t]*(?:([A-Za-z][\\w.#/-]*)[ \\t]*)?$",
       "beginCaptures": {
         "0": {
           "name": "punctuation.definition.string.begin.feature"
+        },
+        "1": {
+          "name": "storage.type.content-type.feature"
         }
       },
+      "end": "^\\s*(?:\"\"\"|```)",
       "endCaptures": {
         "0": {
           "name": "punctuation.definition.string.end.feature"

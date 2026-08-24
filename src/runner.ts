@@ -4,6 +4,12 @@ import { parseScenarioLine, detectDocumentLanguage, resolveInheritedStepType } f
 import { pytestTestName } from './testNames';
 import { ensureBindings, getBindingsForFeature } from './bindings';
 import { getWorkspaceRoot } from './utils';
+import {
+  detectTsBddRunner,
+  cucumberCommand,
+  playwrightCommand,
+  escapeRegExpLiteral,
+} from './tsBdd';
 
 interface ScenarioContext {
   scenarioName: string;
@@ -44,9 +50,15 @@ export async function runScenario(debug = false, atLine?: number): Promise<void>
   await ensureBindings();
   const bindings = getBindingsForFeature(ctx.featurePath, ctx.scenarioName);
   if (bindings.length === 0) {
+    // cucumber-js / playwright-bdd discover features without code bindings —
+    // run through the detected runner instead of warning.
+    if (await runWithTsRunner(ctx.featurePath, ctx.scenarioName)) {
+      return;
+    }
     vscode.window.showWarningMessage(
       `No binding found for "${ctx.scenarioName}". ` +
-        `Add scenarios("...") (Python) or #[scenario(...)] (Rust) first.`,
+        `Add scenarios("...") (Python), #[scenario(...)] (Rust), defineFeature(loadFeature(...)) (TS) ` +
+        `or install @cucumber/cucumber / playwright-bdd.`,
     );
     return;
   }
@@ -54,10 +66,38 @@ export async function runScenario(debug = false, atLine?: number): Promise<void>
   for (const binding of bindings) {
     if (binding.lang === 'python') {
       await runPythonBinding(binding, ctx, debug);
-    } else {
+    } else if (binding.lang === 'rust') {
       await runRustBinding(binding, debug);
+    } else {
+      await runWithTsRunner(ctx.featurePath, ctx.scenarioName);
     }
   }
+}
+
+/**
+ * Run a scenario/feature via the workspace's TS BDD runner, when detectable.
+ * Returns true when a command was issued.
+ */
+export async function runWithTsRunner(
+  featurePath: string,
+  scenarioName?: string,
+): Promise<boolean> {
+  const runner = await detectTsBddRunner();
+  if (!runner) {
+    return false;
+  }
+  const nameArg = scenarioName ? escapeRegExpLiteral(scenarioName) : undefined;
+  if (runner === 'cucumber-js') {
+    const args = [`"${featurePath}"`];
+    if (nameArg) {
+      args.push('--name', `"${nameArg}"`);
+    }
+    await _runInTerminal(cucumberCommand(), args.join(' '));
+    return true;
+  }
+  // playwright-bdd: generated tests are greppable by scenario title
+  await _runInTerminal(playwrightCommand(), nameArg ? `-g "${nameArg}"` : '');
+  return true;
 }
 
 /** Run or debug the whole file (delegates by language of active editor). */
@@ -79,13 +119,20 @@ export async function runFile(debug = false): Promise<void> {
         continue;
       }
       seen.add(b.file.fsPath);
-      any = true;
       if (b.lang === 'python') {
+        any = true;
         await _runInTerminal(pythonCommand(), `"${b.file.fsPath}"`);
-      } else {
+      } else if (b.lang === 'rust') {
+        any = true;
         const target = rustTargetFor(b.file.fsPath);
         await _runInTerminal(cargoCommand(), target ? ` --test ${target}` : '');
+      } else {
+        any = (await runWithTsRunner(fsPath)) || any;
       }
+    }
+    if (!any) {
+      // No code bindings — try the TS runners before giving up.
+      any = await runWithTsRunner(fsPath);
     }
     if (!any) {
       vscode.window.showWarningMessage('No test binding found for this feature file');
@@ -99,6 +146,16 @@ export async function runFile(debug = false): Promise<void> {
     await _runInTerminal(pythonCommand(), `"${fsPath}"`);
   } else if (editor.document.languageId === 'rust') {
     await _runInTerminal(cargoCommand(), '');
+  } else if (
+    editor.document.languageId === 'typescript' ||
+    editor.document.languageId === 'javascript'
+  ) {
+    const runner = await detectTsBddRunner();
+    if (runner === 'cucumber-js') {
+      await _runInTerminal(cucumberCommand(), '');
+    } else if (runner === 'playwright-bdd') {
+      await _runInTerminal(playwrightCommand(), '');
+    }
   }
 }
 

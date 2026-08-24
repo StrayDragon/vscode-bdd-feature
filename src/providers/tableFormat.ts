@@ -31,16 +31,37 @@ function padTo(s: string, width: number): string {
 
 const isTableRow = (line: string) => line.trimStart().startsWith('|');
 
-/** Split a table row into trimmed cells. */
+/**
+ * Split a table row into trimmed cells, honoring Gherkin cell escapes:
+ *   \| → literal pipe (does NOT split),  \\ → literal backslash,  \n → newline.
+ * Cells keep their escaped text verbatim so alignment preserves it.
+ */
 export function splitRow(line: string): string[] {
   let t = line.trim();
   if (t.startsWith('|')) {
     t = t.slice(1);
   }
-  if (t.endsWith('|')) {
+  if (t.endsWith('|') && !t.endsWith('\\|')) {
     t = t.slice(0, -1);
   }
-  return t.split('|').map(c => c.trim());
+  const cells: string[] = [];
+  let cur = '';
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (ch === '\\' && (t[i + 1] === '|' || t[i + 1] === '\\')) {
+      cur += ch + t[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === '|') {
+      cells.push(cur.trim());
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur.trim());
+  return cells;
 }
 /**
  * Re-align every table row group intersecting [startLine, endLine].

@@ -59,7 +59,12 @@ export class BddCodeLensProvider implements vscode.CodeLensProvider {
     if (!cfg('codeLens.usages', true)) {
       return [];
     }
-    if (document.languageId !== 'python' && document.languageId !== 'rust') {
+    if (
+      document.languageId !== 'python' &&
+      document.languageId !== 'rust' &&
+      document.languageId !== 'typescript' &&
+      document.languageId !== 'javascript'
+    ) {
       return [];
     }
     const lenses: vscode.CodeLens[] = [];

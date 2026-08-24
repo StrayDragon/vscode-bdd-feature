@@ -24,6 +24,14 @@ suite('Table alignment (CJK-width aware)', () => {
     assert.deepStrictEqual(splitRow('  | a | b c | '), ['a', 'b c']);
   });
 
+  test('splitRow honors Gherkin cell escapes (\\| stays in-cell)', () => {
+    // Spec: \| is a literal pipe inside a cell — must not split
+    assert.deepStrictEqual(splitRow('| a \\| b | c |'), ['a \\| b', 'c']);
+    assert.deepStrictEqual(splitRow('| \\\\ | x |'), ['\\\\', 'x']);
+    // A row ending in an escaped pipe keeps that pipe as cell content
+    assert.deepStrictEqual(splitRow('| end\\|'), ['end\\|']);
+  });
+
   test('aligns columns by display width', () => {
     const lines = [
       '功能: x',
@@ -92,6 +100,28 @@ suite('Block spans & folding core', () => {
 
   test('finds docstring ranges', () => {
     assert.deepStrictEqual(findDocstrings(lines), [[13, 15]]);
+  });
+
+  test('finds backtick docstrings and never mixes delimiters', () => {
+    const bt = [
+      'Feature: docs',
+      '  Given a page:',
+      '    ```json',
+      '    {"a": 1}',
+      '    ```',
+      '  """',
+      '  triple-quote content stays open until its own closer',
+      '  """',
+    ];
+    assert.deepStrictEqual(findDocstrings(bt), [
+      [2, 4],
+      [5, 7],
+    ]);
+  });
+
+  test('content-type annotation tolerated on opener line', () => {
+    const ct = ['Feature: d', '  Given markdown:', '    """markdown', '    # heading', '    """'];
+    assert.deepStrictEqual(findDocstrings(ct), [[2, 4]]);
   });
 
   test('zh-TW structural keywords resolve via spec data (no hardcoding)', () => {

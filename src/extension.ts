@@ -23,6 +23,7 @@ import { BddTableFormattingProvider } from './providers/tableFormat';
 import { BddRenameProvider } from './providers/rename';
 import { BddSnippetProvider } from './providers/snippets';
 import { findStepUsages } from './refSearch';
+import { resetTsBddDetection } from './tsBdd';
 import type { StepDefinition } from './model';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -55,6 +56,8 @@ export function activate(context: vscode.ExtensionContext): void {
         { language: 'feature', scheme: 'file' },
         { language: 'python', scheme: 'file' },
         { language: 'rust', scheme: 'file' },
+        { language: 'typescript', scheme: 'file' },
+        { language: 'javascript', scheme: 'file' },
       ],
       new FeatureReferenceProvider(),
     ),
@@ -83,6 +86,8 @@ export function activate(context: vscode.ExtensionContext): void {
         { language: 'feature', scheme: 'file' },
         { language: 'python', scheme: 'file' },
         { language: 'rust', scheme: 'file' },
+        { language: 'typescript', scheme: 'file' },
+        { language: 'javascript', scheme: 'file' },
       ],
       codeLens,
     ),
@@ -127,6 +132,10 @@ export function activate(context: vscode.ExtensionContext): void {
       void diagnostics.refresh();
     }
   }, context.subscriptions);
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => resetTsBddDetection()),
+  );
 
   // Refresh diagnostics + lenses when definitions/bindings change on save
   registerStepRefreshHook(context.subscriptions, () => {
@@ -179,12 +188,9 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 function registerStepRefreshHook(disposables: vscode.Disposable[], cb: () => void): void {
+  const watched = new Set(['python', 'rust', 'typescript', 'javascript', 'feature']);
   disposables.push(vscode.workspace.onDidSaveTextDocument(doc => {
-    if (
-      doc.languageId === 'python' ||
-      doc.languageId === 'rust' ||
-      doc.languageId === 'feature'
-    ) {
+    if (watched.has(doc.languageId)) {
       cb();
     }
   }));

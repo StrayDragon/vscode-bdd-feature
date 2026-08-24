@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import type { StepDefinition, StepType } from './model';
 import { extractPythonStepDefs } from './scanners/pythonSteps';
 import { extractRustStepDefs } from './scanners/rustSteps';
+import { extractTsStepDefs } from './scanners/tsSteps';
 import { findMatches } from './matching';
 
 /**
  * Cache of all discovered step definitions across languages
- * (pytest-bdd in Python, rstest-bdd in Rust).
+ * (pytest-bdd in Python, rstest-bdd in Rust,
+ *  cucumber-js / playwright-bdd / jest-cucumber in TS & JS).
  */
 
 let _stepDefinitions: StepDefinition[] = [];
@@ -14,9 +16,17 @@ let _stepFiles: vscode.Uri[] = [];
 let _scanPromise: Promise<StepDefinition[]> | undefined;
 
 /** Directories never worth scanning for step definitions. */
-const SCAN_EXCLUDE = '**/{node_modules,target,dist,out,.git,.venv,venv,__pycache__,.cargo}/**';
+const SCAN_EXCLUDE =
+  '**/{node_modules,target,dist,out,.git,.venv,venv,__pycache__,.cargo,.features-gen,bower_components}/**';
 const PY_GLOBS = ['**/*step*.py', '**/test_*.py'];
 const RS_GLOBS = ['**/*.rs'];
+const TS_GLOBS = [
+  '**/*[Ss]tep*.ts',
+  '**/*[Ss]tep*.js',
+  '**/features/**/*.ts',
+  '**/features/**/*.js',
+];
+const TS_SKIP_RE = /\.d\.tsx?$|[._](test|spec)\.[cm]?[jt]sx?$/;
 
 /**
  * Scan the workspace for Python and Rust BDD step definitions.
@@ -61,6 +71,30 @@ async function doScan(): Promise<StepDefinition[]> {
       const doc = await vscode.workspace.openTextDocument(uri);
       for (const d of extractRustStepDefs(doc.getText())) {
         defs.push({ ...d, lang: 'rust', file: uri });
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  // TypeScript / JavaScript (cucumber-js, playwright-bdd, jest-cucumber).
+  // Cheap pre-filter avoids opening every features/**/*.ts in big repos.
+  const tsUris = await findFilesUnique(TS_GLOBS);
+  for (const uri of tsUris) {
+    const p = uri.fsPath;
+    if (/[/\\](node_modules|dist|out|.features-gen)[/\\]/.test(p) || TS_SKIP_RE.test(p)) {
+      continue;
+    }
+    files.set(uri.fsPath, uri);
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const text = doc.getText();
+      // Cheap pre-filter: skip files without step-call shapes entirely.
+      if (!/\b(Given|When|Then|defineStep)\s*[(@]/.test(text)) {
+        continue;
+      }
+      for (const d of extractTsStepDefs(text)) {
+        defs.push({ ...d, lang: 'typescript', file: uri });
       }
     } catch {
       // skip
@@ -120,13 +154,14 @@ export function findCompletionCandidates(
 }
 
 /**
- * Refresh on save: any Python or Rust file save triggers a debounced rescan.
+ * Refresh on save: any Python, Rust or TS/JS file save triggers a debounced rescan.
  */
 export function registerStepRefreshOnSave(disposables: vscode.Disposable[]): void {
   let timer: NodeJS.Timeout | undefined;
+  const watched = new Set(['python', 'rust', 'typescript', 'javascript']);
   disposables.push(
     vscode.workspace.onDidSaveTextDocument(doc => {
-      if (doc.languageId !== 'python' && doc.languageId !== 'rust') {
+      if (!watched.has(doc.languageId)) {
         return;
       }
       if (timer) {

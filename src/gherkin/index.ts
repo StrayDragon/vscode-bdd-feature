@@ -346,6 +346,60 @@ export function supportedLanguages(): Array<{ code: string; name: string; native
   }));
 }
 
+/** One preferred keyword alias per structural role + step kinds. */
+export interface DialectSkeleton {
+  feature: string;
+  rule: string;
+  scenario: string;
+  outline: string;
+  examples: string;
+  background: string;
+  given: string;
+  when: string;
+  then: string;
+  and: string;
+  but: string;
+}
+
+/**
+ * Preferred aliases for snippet generation.
+ * Localized (non-ASCII) aliases win so e.g. zh-CN skeletons read 场景/规则,
+ * while pure-ASCII languages fall back to their canonical first alias.
+ */
+export function dialectSkeleton(dialect: ResolvedDialect): DialectSkeleton {
+  const langCode = (dialect.code ?? 'en').toLowerCase();
+  const def = LANGUAGE_DEFS.get(langCode) ?? LANGUAGE_DEFS.get('en')!;
+  const pick = (aliases: string[]): string =>
+    aliases.find(k => /[^\x00-\x7F]/.test(k)) ?? aliases[0] ?? '';
+  return {
+    feature: pick(def.feature),
+    rule: pick(def.rule),
+    scenario: pick(def.scenario),
+    outline: pick(def.scenarioOutline),
+    examples: pick(def.examples),
+    background: pick(def.background),
+    given: pick(def.given.filter(k => k !== '*')),
+    when: pick(def.when.filter(k => k !== '*')),
+    then: pick(def.then.filter(k => k !== '*')),
+    and: pick(def.and.filter(k => k !== '*')),
+    but: pick(def.but.filter(k => k !== '*')),
+  };
+}
+
+/**
+ * Best-effort dialect for UI generation on an undeclared document:
+ * explicit `# language:` wins; otherwise CJK content suggests zh-CN,
+ * mirroring the engine's union-matching leniency for directive-less files.
+ */
+export function preferredDialect(text: string): ResolvedDialect {
+  const declared = detectDocumentLanguage(text);
+  if (declared.explicit) {
+    return declared;
+  }
+  const cjk = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(text);
+  return { code: cjk ? 'zh-CN' : 'en', explicit: false };
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

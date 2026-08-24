@@ -8,6 +8,22 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Added
 
+- **TypeScript / JavaScript BDD support** (cucumber-js, playwright-bdd, jest-cucumber):
+  - Step scanning for `Given/When/Then/Step` calls — string patterns compile as
+    **Cucumber Expressions** (`{string}`, `{int}`, `{float}`, `{word}`, `{}`,
+    optional `(s)` and alternative `a/b` text, `\` escapes), `/regex/` literals
+    as regular expressions; playwright-bdd `createBdd()` destructuring and
+    `@When(...)` decorators are recognized.
+  - Cucumber-expression engine hand-ported with conformance tests probed against
+    `@cucumber/cucumber-expressions` 20.x (kept dependency-free by design).
+  - jest-cucumber `defineFeature(loadFeature("…"))` bindings indexed for
+    scenario-header navigation.
+  - Runner integration: cucumber-js (`<feature> --name <scenario>`) and
+    playwright-bdd (`-g <scenario>`) auto-detected from the workspace even
+    without code bindings; configurable via `bddFeature.cucumberCommand` /
+    `bddFeature.playwrightCommand`.
+  - TS step stub generation (`Create Step Definition`), CodeLens usage counts,
+    references, Test Explorer tags.
 - **Diagnostics** (`enableDiagnostics`): undefined steps, duplicate/invalid/unused
   definitions (parametric-aware), unbound features — with related-information links.
   Sub-toggles under `bddFeature.diagnostics.*`.
@@ -33,6 +49,21 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   report "no definition").
 - Table formatting preserves CRLF line endings.
 - Unused-definition detection understands parametric patterns.
+- **Spec fidelity**: table cell escapes (`\|`, `\\`) no longer split cells during
+  alignment; docstrings support ``` ``` ``` delimiters and content-type
+  annotations; comments only match at line start (per Gherkin spec).
+- Python stubs use pytest-bdd's exact reserved argument names
+  (`datatable`/`docstring`); docstring-bearing steps now emit a `docstring` param.
+- Snippets follow the document dialect (English files get English skeletons).
+- Integration tests no longer race the esbuild bundle's module state (run via
+  VS Code commands).
+- **Scenario Outline templates resolve to definitions**: `<param>` placeholders
+  now participate in shape matching (frameworks substitute values before
+  matching; editor-side equivalent), powering goto-def/diagnostics on outlines.
+- **Raw-string Rust patterns** (`r#"…"#`, `r##…"##`) no longer keep a stray
+  leading quote — extracted text and jump landing positions were off-by-one.
+- f-string interpolated regex patterns (`rf"…{TABLE}…"`) approximate
+  identifier-braced holes so runtime-assembled matchers still resolve.
 
 ## [0.2.0] - 2026-08-23
 

@@ -20,15 +20,22 @@
     "gherkin",
     "bdd",
     "pytest-bdd",
-    "feature",
     "cucumber",
+    "cucumber-js",
+    "playwright-bdd",
+    "rstest-bdd",
+    "typescript",
+    "feature",
     "chinese",
     "中文"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
     "onLanguage:feature",
-    "onLanguage:python"
+    "onLanguage:python",
+    "onLanguage:rust",
+    "onLanguage:typescript",
+    "onLanguage:javascript"
   ],
   "contributes": {
     "languages": [
@@ -195,6 +202,16 @@
           "type": "string",
           "default": "cargo test",
           "description": "Cargo command used for running rstest-bdd scenarios"
+        },
+        "bddFeature.cucumberCommand": {
+          "type": "string",
+          "default": "npx cucumber-js",
+          "description": "Base command used for running cucumber-js scenarios (feature file + --name are appended)"
+        },
+        "bddFeature.playwrightCommand": {
+          "type": "string",
+          "default": "npx playwright test",
+          "description": "Base command used for running playwright-bdd scenarios (-g <scenario> is appended)"
         },
         "bddFeature.featuresBaseDir": {
           "type": "string",

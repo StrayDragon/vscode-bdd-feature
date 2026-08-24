@@ -7,7 +7,7 @@
  *   pub(crate) fn _g_mock(...) { ... }
  *
  * Scenario bindings:
- *   #[scenario(path = "llmanspec/specs/x.feature", name = "session-start")]
+ *   #[scenario(path = "specs/x.feature", name = "session-start")]
  *   async fn test_hooks_wiring_session_start(agent: AgentState) {}
  */
 
@@ -60,6 +60,7 @@ function scanRustString(
     if (text[i] !== '"') {
       return undefined;
     }
+    i++; // consume the opening quote (raw branch previously skipped this)
   } else if (text[i] !== '"') {
     return undefined;
   } else {

@@ -71,19 +71,31 @@ export function computeBlockSpans(lines: string[]): BlockSpan[] {
   return headers;
 }
 
-/** Docstring ranges (""" … """) as [startLine,endLine] pairs. */
+/**
+ * Docstring ranges (""" … """ or ``` … ```) as [startLine,endLine] pairs.
+ * Lenient: trailing junk/content types on delimiter lines are tolerated;
+ * delimiters must not be mixed within one block.
+ */
 export function findDocstrings(lines: string[]): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   let open = -1;
+  let delim: '"""' | '```' | undefined;
   for (let i = 0; i < lines.length; i++) {
-    const count = (lines[i].match(/"""/g) ?? []).length;
-    for (let k = 0; k < count; k++) {
-      if (open === -1) {
+    const trimmed = lines[i].trim();
+    if (open === -1) {
+      if (trimmed.startsWith('```')) {
         open = i;
-      } else {
-        out.push([open, i]);
-        open = -1;
+        delim = '```';
+      } else if (trimmed.startsWith('"""')) {
+        open = i;
+        delim = '"""';
       }
+      continue;
+    }
+    if (delim && trimmed.startsWith(delim)) {
+      out.push([open, i]);
+      open = -1;
+      delim = undefined;
     }
   }
   return out;

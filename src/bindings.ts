@@ -7,17 +7,20 @@ import {
   extractPythonScenarioBinding,
 } from './scanners/pythonSteps';
 import { extractRustScenarioBindings } from './scanners/rustSteps';
+import { extractTsFeatureBindings } from './scanners/tsSteps';
 
 /**
  * Index mapping .feature files to the code that binds them:
  *  - Python: `scenarios("features/x.feature")` / `scenario("f", "name")` calls
  *  - Rust:   `#[scenario(path = "specs/x.feature", name = "...")]` attributes
+ *  - TS/JS:  jest-cucumber `defineFeature(loadFeature("./x.feature"))` calls
  *
  * Path resolution mirrors each framework:
  *  - pytest-bdd resolves relative to the calling module's directory, or
  *    `<rootdir>/<bdd_features_base_dir>` when set in an ini file.
  *  - rstest-bdd resolves relative to the crate manifest dir (nearest
  *    Cargo.toml ancestor of the binding file).
+ *  - jest-cucumber loadFeature() resolves relative to the calling module.
  */
 
 const EXCLUDE = '**/{node_modules,target,dist,out,.git,.venv,venv,__pycache__}/**';
@@ -136,6 +139,30 @@ async function doRebuild(): Promise<void> {
       // skip
     }
   }
+
+  // jest-cucumber defineFeature(loadFeature("…")) bindings
+  const tsUris = await vscode.workspace.findFiles('**/*.{ts,js,mjs,cjs}', EXCLUDE, 5000);
+  for (const uri of tsUris) {
+    if (/[/\\](node_modules|dist|out)[/\\]/.test(uri.fsPath) || /\.d\.tsx?$/.test(uri.fsPath)) {
+      continue;
+    }
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const text = doc.getText();
+      if (!text.includes('loadFeature')) {
+        continue;
+      }
+      for (const b of extractTsFeatureBindings(text)) {
+        const resolved = resolveTsFeaturePath(path.dirname(uri.fsPath), b.featureArg);
+        if (!resolved || !isFeaturePath(resolved)) {
+          continue;
+        }
+        push(state.byFeature, resolved, { lang: 'typescript', file: uri, line: b.line });
+      }
+    } catch {
+      // skip
+    }
+  }
 }
 
 function push(map: Map<string, FeatureBinding[]>, key: string, value: FeatureBinding): void {
@@ -175,6 +202,18 @@ function resolvePythonFeaturePath(
 function normalize(p: string): string {
   // path.normalize keeps platform separators; index keys use fsPath form.
   return path.normalize(p);
+}
+
+/** Resolve a jest-cucumber loadFeature() argument (relative to the caller). */
+function resolveTsFeaturePath(bindingDir: string, arg: string): string | undefined {
+  const cleaned = arg.trim();
+  if (!cleaned) {
+    return undefined;
+  }
+  if (path.isAbsolute(cleaned)) {
+    return normalize(cleaned);
+  }
+  return normalize(path.join(bindingDir, cleaned));
 }
 
 function nearestManifestDir(fromFile: string): string | undefined {
