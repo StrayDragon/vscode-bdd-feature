@@ -27,10 +27,11 @@ import { findStepUsages } from './refSearch';
 import { resetTsBddDetection } from './tsBdd';
 import { runScenariosByTagExpression } from './tagCommands';
 import { registerTagIndexWatchers, rescanTagIndex } from './tagIndex';
+import { getOutputChannel } from './utils';
 import type { StepDefinition } from './model';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const outputChannel = vscode.window.createOutputChannel('BDD Feature');
+  const outputChannel = getOutputChannel();
   outputChannel.appendLine('BDD Feature extension activating...');
 
   // ── Scanning ──

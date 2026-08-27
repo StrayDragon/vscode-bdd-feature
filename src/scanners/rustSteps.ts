@@ -89,6 +89,12 @@ function scanRustString(
 
 const ATTR_KEYWORDS = ['given', 'when', 'then'] as const;
 
+// Module-level compiled once — the former `new RegExp` per keyword per line
+// cost ~3 constructions × every line of every Rust file on each scan.
+const ATTR_LINE_REGEXES = ATTR_KEYWORDS.map(
+  kw => ({ kw, re: new RegExp(`^\\s*#\\s*\\[\\s*${kw}\\s*\\(`) }),
+);
+
 /** Find all rstest-bdd step attributes and their following functions. */
 export function extractRustStepDefs(source: string): ExtractedRustStepDef[] {
   const lines = source.split(/\r?\n/);
@@ -96,8 +102,7 @@ export function extractRustStepDefs(source: string): ExtractedRustStepDef[] {
 
   for (let i = 0; i < lines.length; i++) {
     // Attribute must start the trimmed line: #[given("...")] (may span lines)
-    for (const kw of ATTR_KEYWORDS) {
-      const re = new RegExp(`^\\s*#\\s*\\[\\s*${kw}\\s*\\(`);
+    for (const { kw, re } of ATTR_LINE_REGEXES) {
       if (!re.test(lines[i])) {
         continue;
       }

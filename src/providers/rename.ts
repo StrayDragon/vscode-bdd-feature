@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { parseStepLine, parseScenarioLine, detectDocumentLanguage } from '../gherkin';
-import { scanStepDefinitions, findMatchingSteps } from '../steps';
+import { whenStepsReady, findMatchingSteps } from '../steps';
 import { ensureBindings, getBindingsForFeature } from '../bindings';
 import { toggles } from '../config';
 
@@ -57,7 +57,7 @@ export class BddRenameProvider implements vscode.RenameProvider {
       return undefined;
     }
     newName = newName.trim();
-    await Promise.all([scanStepDefinitions(), ensureBindings()]);
+    await Promise.all([whenStepsReady(), ensureBindings()]);
 
     const line = document.lineAt(position.line);
     const dialect = detectDocumentLanguage(document.getText());

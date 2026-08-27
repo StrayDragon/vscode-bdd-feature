@@ -6,6 +6,37 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Performance
+
+Systematic hot-path audit (ranked by measured impact; suite wall time 11s → 0.9s):
+
+- **Per-line regex construction storm eliminated** — `parseScenarioLine` /
+  `parseFeatureLine` / `isStructuralKeyword` / `parseStructuralByRole` built a
+  `new RegExp` per keyword per call (~450–650 constructions for a single
+  non-header line) on every diagnostics/symbols/folding/codelens pass; they
+  now run on the module-cached precompiled alternations. `parseStepLine`
+  similarly replaced its per-call ~400-entry keyword-array allocation and
+  linear probing with one cached anchored alternation per dialect (boundary
+  semantics preserved via negative lookahead + longest-first backtracking).
+- **Read paths no longer trigger workspace sweeps** — new `whenStepsReady()`
+  serves cached definitions (joining in-flight scans); workspace symbols per
+  keystroke, find-references and quick fixes previously started a full
+  py/rs/ts rescan per invocation. Workspace symbols now serve scenario titles
+  from the incremental tag index instead of re-opening every .feature.
+- **Scans read raw bytes, not documents** — step scanning and bindings
+  rebuilds use `workspace.fs.readFile` (BOM-aware shared decoder): thousands
+  of candidate files no longer pin the editor document cache per save.
+- **Single-pass diagnostics** — the unused-definitions pass reuses the
+  usages collected during the feature sweep (second full sweep removed),
+  dedupes them, fast-paths exact defs via Set, and `matchRegex` /
+  `outlineTemplateMatches` memoize their compiled patterns.
+- **Find-references single sweep** — a definition file with N attributes
+  performed N independent workspace sweeps; one pass now evaluates all defs.
+- Rust scan pre-filter (skip files without `#[given/when/then(` shapes);
+  hoisted module-level attribute regexes (was 3 `new RegExp` per line of
+  every .rs file); TestTag interning cache evicted on refresh; shared output
+  channel instead of two same-named instances.
+
 ### Fixed
 
 - **BDD Features view feedback loop** (high CPU, endless loading): the tree's

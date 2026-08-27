@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { parseStepLine, parseScenarioLine, detectDocumentLanguage } from './gherkin';
-import { getStepDefinitions, scanStepDefinitions } from './steps';
+import { getStepDefinitions, whenStepsReady } from './steps';
 import { stepMatchesDefinition } from './matching';
+import { readFileText } from './utils';
 
 /**
  * Find References.
@@ -28,7 +29,7 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
       if (!parsed) {
         return [];
       }
-      await scanStepDefinitions();
+      await whenStepsReady();
       const originDefs = getStepDefinitions().filter(
         d => stepMatchesDefinition(parsed.text, d) &&
           (d.type === 'step' || !parsed.type || d.type === parsed.type),
@@ -38,7 +39,7 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
 
     // ── Origin is a definition file ──
     if (document.languageId === 'python' || document.languageId === 'rust') {
-      await scanStepDefinitions();
+      await whenStepsReady();
       const defsHere = getStepDefinitions().filter(d =>
         d.file.fsPath === document.uri.fsPath &&
         (d.decoratorLine === position.line ||
@@ -47,21 +48,41 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
       if (defsHere.length === 0) {
         return [];
       }
+      // ONE workspace sweep evaluates every definition (the former
+      // per-def loop re-swept all features N times and duplicated
+      // overlapping Locations).
       return this._findFeatureUsagesForDefs(defsHere, context.includeDeclaration);
     }
 
     return [];
   }
 
-  /** All feature steps matching ANY of the given definitions. */
+  /** All feature steps matching ANY of the given definitions (single sweep). */
   private async _findFeatureUsagesForDefs(
     defs: readonly StepDefinitionLite[],
     includeDecl: boolean,
   ): Promise<vscode.Location[]> {
     const results: vscode.Location[] = [];
-    for (const def of defs) {
-      results.push(...(await this._findFeatureUsages(def.text, typeOf(def), [def], undefined, includeDecl)));
+    const featureFiles = await vscode.workspace.findFiles('**/*.feature', '**/{node_modules,target}/**', 3000);
+    for (const fileUri of featureFiles) {
+      try {
+        const text = await readFileText(fileUri);
+        const dialect = detectDocumentLanguage(text);
+        const lines = text.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          const parsed = parseStepLine(lines[i], dialect);
+          if (!parsed) {
+            continue;
+          }
+          if (defs.some(def => stepMatchesDefinition(parsed.text, def))) {
+            results.push(new vscode.Location(fileUri, new vscode.Range(i, 0, i, lines[i].length)));
+          }
+        }
+      } catch {
+        // skip unreadable
+      }
     }
+    void includeDecl;
     return results;
   }
 
@@ -82,11 +103,11 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
 
     for (const fileUri of featureFiles) {
       try {
-        const doc = await vscode.workspace.openTextDocument(fileUri);
-        const dialect = detectDocumentLanguage(doc.getText());
-        for (let i = 0; i < doc.lineCount; i++) {
-          const text = doc.lineAt(i).text;
-          const parsed = parseStepLine(text, dialect);
+        const text = await readFileText(fileUri);
+        const dialect = detectDocumentLanguage(text);
+        const lines = text.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          const parsed = parseStepLine(lines[i], dialect);
           if (!parsed) {
             continue;
           }
@@ -95,7 +116,7 @@ export class FeatureReferenceProvider implements vscode.ReferenceProvider {
               ? originDefs.some(def => stepMatchesDefinition(parsed.text, def))
               : parsed.text === stepText;
           if (matches && !(fileUri.fsPath === excludeUri?.fsPath)) {
-            results.push(new vscode.Location(fileUri, new vscode.Range(i, 0, i, text.length)));
+            results.push(new vscode.Location(fileUri, new vscode.Range(i, 0, i, lines[i].length)));
           }
         }
         // Scenario header references to the same file's binding? skip —

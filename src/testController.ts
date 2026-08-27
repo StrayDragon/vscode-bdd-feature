@@ -83,6 +83,8 @@ export class BddTestController {
       3000,
     );
     this._controller.items.replace([]);
+    // Tags from deleted/renamed files would otherwise accumulate forever.
+    testTagCache.clear();
     for (const uri of featureFiles) {
       try {
         const doc = await vscode.workspace.openTextDocument(uri);

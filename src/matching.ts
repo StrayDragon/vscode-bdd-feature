@@ -34,18 +34,35 @@ function escapeRe(s: string): string {
  * Shape-compare an outline template against a definition pattern:
  * '用户 <uid> 存在' → /^用户 .*? 存在$/ tested over the def text, so
  * `用户 {uid:d} 存在`, `{string}` variants and bare literals all resolve.
+ *
+ * The shape depends only on the template, so compiled shapes are memoized —
+ * this runs per (step, def) pair in hover/goto-def/references/diagnostics
+ * match loops.
  */
+const OUTLINE_SHAPE_CACHE = new Map<string, RegExp>();
+const OUTLINE_SHAPE_CACHE_MAX = 4096;
+
 export function outlineTemplateMatches(templateStep: string, patternText: string): boolean {
   if (!OUTLINE_PARAM_RE.test(templateStep)) {
     return false;
   }
-  try {
-    const parts = templateStep.split(/<[^<>]*>/);
-    const shape = new RegExp(`^${parts.map(escapeRe).join('[\\s\\S]*?')}$`, 'u');
-    return shape.test(patternText);
-  } catch {
+  let shape = OUTLINE_SHAPE_CACHE.get(templateStep);
+  if (shape === undefined) {
+    try {
+      const parts = templateStep.split(/<[^<>]*>/);
+      shape = new RegExp(`^${parts.map(escapeRe).join('[\\s\\S]*?')}$`, 'u');
+    } catch {
+      shape = false as unknown as RegExp; // negative cache
+    }
+    if (OUTLINE_SHAPE_CACHE.size >= OUTLINE_SHAPE_CACHE_MAX) {
+      OUTLINE_SHAPE_CACHE.clear(); // simple eviction; shapes are recomputable
+    }
+    OUTLINE_SHAPE_CACHE.set(templateStep, shape);
+  }
+  if (shape === (false as unknown as RegExp)) {
     return false;
   }
+  return (shape as RegExp).test(patternText);
 }
 
 /**
@@ -90,33 +107,69 @@ export function stepMatchesDefinition(featureStep: string, def: StepDefinition):
   return outlineTemplateMatches(feature, def.text);
 }
 
-function matchRegex(featureStep: string, pattern: string): boolean {
+interface CompiledReVariants {
+  /** Anchored variants tried in order; null = fails to compile under 'u' */
+  anchored: Array<RegExp | null>;
+  /** Loose (unanchored) last-resort variant, when applicable */
+  loose: RegExp | null;
+}
+
+const RE_VARIANT_CACHE = new Map<string, CompiledReVariants>();
+const RE_VARIANT_CACHE_MAX = 4096;
+
+function compileReVariants(pattern: string): CompiledReVariants {
+  const cached = RE_VARIANT_CACHE.get(pattern);
+  if (cached) {
+    return cached;
+  }
   const jsPattern = pattern.replace(/\(\?P<(\w+)>/g, '(?<$1>');
   // Python f-string interpolations inside re patterns (rf"…{_TAB}…") resolve
   // only at runtime; approximate each identifier-braced hole as lazy any-text.
   // Digit-led braces like \d{1,3} are quantifiers and untouched.
   const hasInterpolation = /\{[A-Za-z_]\w*\}/.test(pattern);
-  const variants = hasInterpolation
+  const sources = hasInterpolation
     ? [jsPattern, jsPattern.replace(/\{[A-Za-z_]\w*\}/g, '(?:[\\s\\S]*?)')]
     : [jsPattern];
 
-  for (let i = 0; i < variants.length; i++) {
+  const compiled: CompiledReVariants = { anchored: [], loose: null };
+  sources.forEach((src, i) => {
+    let anchored: RegExp | null = null;
     try {
-      if (new RegExp(`^(?:${variants[i]})$`, 'u').test(featureStep)) {
-        return true;
-      }
+      anchored = new RegExp(`^(?:${src})$`, 'u');
     } catch {
-      // invalid under 'u' (e.g. raw '{ident}' braces) — try next variant
-      continue;
+      anchored = null; // invalid under 'u' (e.g. raw '{ident}' braces)
+    }
+    compiled.anchored.push(anchored);
+    if (i === sources.length - 1 && !hasInterpolation) {
+      try {
+        compiled.loose = new RegExp(src, 'u');
+      } catch {
+        compiled.loose = null;
+      }
+    }
+  });
+
+  if (RE_VARIANT_CACHE.size >= RE_VARIANT_CACHE_MAX) {
+    RE_VARIANT_CACHE.clear();
+  }
+  RE_VARIANT_CACHE.set(pattern, compiled);
+  return compiled;
+}
+
+function matchRegex(featureStep: string, pattern: string): boolean {
+  const compiled = compileReVariants(pattern);
+  for (let i = 0; i < compiled.anchored.length; i++) {
+    const re = compiled.anchored[i];
+    if (!re) {
+      continue; // failed to compile under 'u' — try next variant (original semantics)
+    }
+    if (re.test(featureStep)) {
+      return true;
     }
     // Anchored failed but compiled: allow a loose search only as a last
     // resort for partial patterns (author wrote an unanchored fragment).
-    if (i === variants.length - 1 && !hasInterpolation) {
-      try {
-        return new RegExp(variants[i], 'u').test(featureStep);
-      } catch {
-        return false;
-      }
+    if (i === compiled.anchored.length - 1) {
+      return compiled.loose ? compiled.loose.test(featureStep) : false;
     }
   }
   return false;

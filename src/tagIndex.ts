@@ -4,7 +4,9 @@ import {
   compileTagExpression,
   type TagPredicate,
   type ParsedFeatureTags,
+  type TagProblem,
 } from './gherkin/tags';
+import { readFileText } from './utils';
 
 /**
  * Workspace-wide index of Gherkin tags across every .feature file.
@@ -44,6 +46,12 @@ export interface IndexedFile {
   /** union of all tags in the file — O(1) membership for filters */
   tagSet: Set<string>;
   problemCount: number;
+  /**
+   * Parsed tag problems — stored ONLY when non-empty (the overwhelmingly
+   * common healthy-file case costs nothing), so diagnostics can reuse them
+   * without re-parsing.
+   */
+  problems?: TagProblem[];
 }
 
 /** Aggregate stats for one known tag. */
@@ -58,16 +66,6 @@ export interface TagStat {
 
 const entries = new Map<string, IndexedFile>();
 let buildPromise: Promise<void> | undefined;
-
-const decoder = new TextDecoder('utf-8', { fatal: false });
-
-function decode(bytes: Uint8Array): string {
-  let text = decoder.decode(bytes);
-  if (text.charCodeAt(0) === 0xfeff) {
-    text = text.slice(1); // BOM
-  }
-  return text;
-}
 
 // ── Change notification ──
 
@@ -198,8 +196,7 @@ export function matchingScenarios(predicate: TagPredicate): ScenarioMatch[] {
 /** Re-parse a single file after save/change; fires a debounced notification. */
 export async function updateIndexedFile(uri: vscode.Uri): Promise<void> {
   try {
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    applyParsed(uri, parseFeatureTags(decode(bytes).split(/\r?\n/)));
+    applyParsed(uri, parseFeatureTags((await readFileText(uri)).split(/\r?\n/)));
     notifySoon();
   } catch {
     removeIndexedFile(uri.fsPath);
@@ -246,8 +243,7 @@ async function doFullScan(): Promise<void> {
 
 async function readAndStore(uri: vscode.Uri): Promise<void> {
   try {
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    applyParsed(uri, parseFeatureTags(decode(bytes).split(/\r?\n/)));
+    applyParsed(uri, parseFeatureTags((await readFileText(uri)).split(/\r?\n/)));
   } catch {
     // unreadable/deleted mid-scan — skip
   }
@@ -280,6 +276,7 @@ function applyParsed(uri: vscode.Uri, parsed: ParsedFeatureTags): void {
     scenarios,
     tagSet,
     problemCount: parsed.problems.length,
+    ...(parsed.problems.length > 0 ? { problems: parsed.problems } : {}),
   });
   invalidateStatsCache();
 }

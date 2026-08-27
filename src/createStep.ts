@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseStepLine, detectDocumentLanguage, resolveInheritedStepType } from './gherkin';
 import { getWorkspaceRoot } from './utils';
-import { getStepDefinitions, scanStepDefinitions } from './steps';
+import { getStepDefinitions, whenStepsReady } from './steps';
 
 /**
  * Create a step-definition stub from the step under the cursor.
@@ -35,7 +35,7 @@ export async function createStepDefinition(): Promise<void> {
     line.lineNumber + 1 < document.lineCount &&
     /^[\s]*(?:"""|```)/.test(document.lineAt(line.lineNumber + 1).text);
 
-  await scanStepDefinitions();
+  await whenStepsReady();
   const targetFile = await _selectTargetFile();
   if (!targetFile) {
     return;

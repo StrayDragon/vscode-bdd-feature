@@ -26,6 +26,22 @@ export async function readFile(uri: vscode.Uri): Promise<string> {
   return doc.getText();
 }
 
+const sharedDecoder = new TextDecoder('utf-8', { fatal: false });
+
+/**
+ * Read raw file text WITHOUT openTextDocument — scanning sweeps must not
+ * inflate VS Code's document cache (each pinned document costs memory).
+ * Callers that never need a live TextDocument should prefer this.
+ */
+export async function readFileText(uri: vscode.Uri): Promise<string> {
+  const bytes = await vscode.workspace.fs.readFile(uri);
+  let text = sharedDecoder.decode(bytes);
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1); // BOM
+  }
+  return text;
+}
+
 /**
  * Read file content from a filesystem path.
  */

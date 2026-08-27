@@ -145,18 +145,6 @@ export function detectDocumentLanguage(text: string): ResolvedDialect {
   return { code: ORIGINAL_CODE.get(lower) ?? m[1], explicit: true };
 }
 
-function keywordsFor(dialect: ResolvedDialect): { steps: string[]; continuations: string[] } {
-  if (!dialect.explicit || !dialect.code) {
-    return { steps: ALL_STEP_KEYWORDS, continuations: ALL_CONTINUATION };
-  }
-  const def = LANGUAGE_DEFS.get(dialect.code.toLowerCase())!;
-  const steps = [
-    ...new Set([...def.given, ...def.when, ...def.then]),
-  ].sort(byLengthDesc);
-  const conts = [...new Set([...def.and, ...def.but])].sort(byLengthDesc);
-  return { steps, continuations: conts };
-}
-
 // ── Parsing API ──
 
 export interface ParsedStepLine {
@@ -169,6 +157,37 @@ export interface ParsedStepLine {
 }
 
 /**
+ * Precompiled `^[ \t]*(KW1|KW2|…)(?![A-Za-z0-9_])` per dialect, longest-first.
+ *
+ * One `.exec` replaces the former ~350–550 `startsWith` probes AND the
+ * per-call `[...steps, ...continuations]` array allocation. The negative
+ * lookahead encodes the original boundary rule: a longer keyword that fails
+ * the boundary makes the engine backtrack to shorter alternatives, exactly
+ * like the previous explicit loop.
+ */
+const STEP_LINE_REGEX_CACHE = new Map<string, { steps: RegExp; continuations: RegExp }>();
+
+function stepLineRegexes(dialect: ResolvedDialect): { steps: RegExp; continuations: RegExp } {
+  const key = (dialect.explicit && dialect.code ? dialect.code : '__union__').toLowerCase();
+  let pair = STEP_LINE_REGEX_CACHE.get(key);
+  if (!pair) {
+    const build = (kws: string[]): RegExp =>
+      new RegExp(`^[ \\t]*(${kws.map(escapeRe).join('|')})(?![A-Za-z0-9_])`);
+    if (dialect.explicit && dialect.code) {
+      const def = LANGUAGE_DEFS.get(dialect.code.toLowerCase())!;
+      pair = {
+        steps: build([...new Set([...def.given, ...def.when, ...def.then])].sort(byLengthDesc)),
+        continuations: build([...new Set([...def.and, ...def.but])].sort(byLengthDesc)),
+      };
+    } else {
+      pair = { steps: build(ALL_STEP_KEYWORDS), continuations: build(ALL_CONTINUATION) };
+    }
+    STEP_LINE_REGEX_CACHE.set(key, pair);
+  }
+  return pair;
+}
+
+/**
  * Parse one line as a step line.
  * `dialect` should come from detectDocumentLanguage(documentText).
  */
@@ -176,36 +195,21 @@ export function parseStepLine(
   line: string,
   dialect: ResolvedDialect = { explicit: false },
 ): ParsedStepLine | undefined {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const { steps, continuations } = keywordsFor(dialect);
+  const { steps, continuations } = stepLineRegexes(dialect);
 
-  for (const kw of [...steps, ...continuations]) {
-    if (!trimmed.startsWith(kw)) {
-      continue;
-    }
-    const rest = trimmed.slice(kw.length);
-    // Boundary check: end-of-line, whitespace, or CJK-style direct adjacency
-    // (cucumber allows the step text to follow a CJK keyword without space).
-    const nextCh = rest.charAt(0);
-    const boundary =
-      rest === '' || /\s/.test(nextCh) || !isAsciiWordChar(nextCh);
-    if (!boundary) {
-      continue;
-    }
-    return {
-      keyword: kw,
-      text: rest.trim(),
-      type: KEYWORD_TO_TYPE.get(kw),
-    };
+  // Step keywords first, then continuations — same preference order as the
+  // original [...steps, ...continuations] loop.
+  const stepsM = steps.exec(line);
+  if (stepsM) {
+    const keyword = stepsM[1];
+    return { keyword, text: line.slice(stepsM[0].length).trim(), type: KEYWORD_TO_TYPE.get(keyword) };
+  }
+  const contM = continuations.exec(line);
+  if (contM) {
+    const keyword = contM[1];
+    return { keyword, text: line.slice(contM[0].length).trim(), type: undefined };
   }
   return undefined;
-}
-
-function isAsciiWordChar(ch: string): boolean {
-  return /[A-Za-z0-9_]/.test(ch);
 }
 
 /** Canonical type of an already-parsed keyword (undefined → inherit). */
@@ -220,50 +224,32 @@ export function isContinuationKeyword(keyword: string): boolean {
 /**
  * Parse a scenario header line ("场景: xxx" / "Scenario Outline: xxx").
  * Returns the scenario title, or undefined when not a scenario line.
+ *
+ * Backed by the module-cached precompiled alternations (one `.exec` per
+ * role) — this sits on per-line paths in diagnostics, symbols, code lenses.
  */
 export function parseScenarioLine(line: string, _dialect?: ResolvedDialect): string | undefined {
-  const trimmed = line.trimStart();
-  for (const kw of STRUCTURAL_LOOKUP.get('scenarioOutline') ?? []) {
-    const re = new RegExp(`^${escapeRe(kw)}\\s*:`);
-    const m = trimmed.match(re);
-    if (m) {
-      return trimmed.slice(m[0].length).trim();
-    }
-  }
-  for (const kw of STRUCTURAL_LOOKUP.get('scenario') ?? []) {
-    const re = new RegExp(`^${escapeRe(kw)}\\s*:`);
-    const m = trimmed.match(re);
-    if (m) {
-      return trimmed.slice(m[0].length).trim();
-    }
-  }
-  return undefined;
+  return (
+    matchStructuralHeader(line, 'scenarioOutline')?.title ??
+    matchStructuralHeader(line, 'scenario')?.title
+  );
 }
 
 /** Parse a Feature header line; returns the feature title or undefined. */
 export function parseFeatureLine(line: string, _dialect?: ResolvedDialect): string | undefined {
-  const trimmed = line.trimStart();
-  for (const kw of STRUCTURAL_LOOKUP.get('feature') ?? []) {
-    const re = new RegExp(`^${escapeRe(kw)}\\s*:`);
-    const m = trimmed.match(re);
-    if (m) {
-      return trimmed.slice(m[0].length).trim();
-    }
-  }
-  return undefined;
+  return matchStructuralHeader(line, 'feature')?.title;
 }
 
 /** True for any structural keyword line (Feature/Rule/Background/Examples/…). */
 export function isStructuralKeyword(line: string): boolean {
-  const trimmed = line.trimStart();
-  for (const kws of STRUCTURAL_LOOKUP.values()) {
-    for (const kw of kws) {
-      if (new RegExp(`^${escapeRe(kw)}\\s*:`).test(trimmed)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return (
+    matchStructuralHeader(line, 'feature') !== undefined ||
+    matchStructuralHeader(line, 'rule') !== undefined ||
+    matchStructuralHeader(line, 'background') !== undefined ||
+    matchStructuralHeader(line, 'scenarioOutline') !== undefined ||
+    matchStructuralHeader(line, 'scenario') !== undefined ||
+    matchStructuralHeader(line, 'examples') !== undefined
+  );
 }
 
 /** Parse a Rule header line ("Rule: x" / "规则: x"); returns title or undefined. */
@@ -332,15 +318,7 @@ function parseStructuralByRole(
   line: string,
   role: 'feature' | 'rule' | 'scenario' | 'scenarioOutline' | 'background' | 'examples',
 ): string | undefined {
-  const trimmed = line.trimStart();
-  for (const kw of STRUCTURAL_LOOKUP.get(role) ?? []) {
-    const re = new RegExp(`^${escapeRe(kw)}\\s*:`);
-    const m = trimmed.match(re);
-    if (m) {
-      return trimmed.slice(m[0].length).trim();
-    }
-  }
-  return undefined;
+  return matchStructuralHeader(line, role)?.title;
 }
 
 /**

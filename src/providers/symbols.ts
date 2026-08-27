@@ -12,7 +12,8 @@ import {
   parseExamplesLine,
   detectDocumentLanguage,
 } from '../gherkin';
-import { getStepDefinitions, scanStepDefinitions } from '../steps';
+import { getStepDefinitions, whenStepsReady } from '../steps';
+import { ensureTagIndex, indexedFiles } from '../tagIndex';
 import { toggles } from '../config';
 
 // ── Pure parsing core ──
@@ -165,36 +166,26 @@ export class BddWorkspaceSymbolProvider implements vscode.WorkspaceSymbolProvide
     if (!toggles.workspaceSymbols()) {
       return [];
     }
-    await scanStepDefinitions();
+    // Scenario/feature titles come from the incremental tag index — former
+    // implementation re-opened every .feature on every query (and the query
+    // fires per keystroke). Only the step-def half uses the steps cache.
+    await Promise.all([whenStepsReady(), ensureTagIndex()]);
     const q = query.toLowerCase();
     const results: vscode.SymbolInformation[] = [];
 
-    const files = await vscode.workspace.findFiles('**/*.feature', '**/{node_modules,target}/**', 3000);
-    for (const uri of files) {
-      try {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const dialect = detectDocumentLanguage(doc.getText());
-        let featureName = uri.path.split('/').pop() ?? '';
-        const lines = doc.getText().split(/\r?\n/);
-        for (let i = 0; i < lines.length; i++) {
-          const feat = parseFeatureLine(lines[i], dialect);
-          if (feat !== undefined && feat.trim()) {
-            featureName = feat;
-          }
-          const sc = parseScenarioLine(lines[i], dialect);
-          if (sc !== undefined && matchesQuery(sc, q)) {
-            results.push(
-              new vscode.SymbolInformation(
-                sc,
-                vscode.SymbolKind.Method,
-                featureName,
-                new vscode.Location(uri, new vscode.Range(i, 0, i, lines[i].length)),
-              ),
-            );
-          }
+    for (const file of indexedFiles()) {
+      const featureName = file.featureName ?? fileNameOf(file.relPath);
+      for (const sc of file.scenarios) {
+        if (matchesQuery(sc.name, q)) {
+          results.push(
+            new vscode.SymbolInformation(
+              sc.name,
+              vscode.SymbolKind.Method,
+              featureName,
+              new vscode.Location(file.uri, new vscode.Range(sc.line, 0, sc.line, 160)),
+            ),
+          );
         }
-      } catch {
-        // skip
       }
     }
 
@@ -215,6 +206,11 @@ export class BddWorkspaceSymbolProvider implements vscode.WorkspaceSymbolProvide
     }
     return results.slice(0, 300);
   }
+}
+
+function fileNameOf(relPath: string): string {
+  const i = relPath.lastIndexOf('/');
+  return i >= 0 ? relPath.slice(i + 1) : relPath;
 }
 
 function matchesQuery(text: string, q: string): boolean {

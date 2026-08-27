@@ -5,6 +5,7 @@ import { extractRustStepDefs } from './scanners/rustSteps';
 import { extractTsStepDefs } from './scanners/tsSteps';
 import { findMatches } from './matching';
 import { invalidateBindings } from './bindings';
+import { readFileText } from './utils';
 
 /**
  * Cache of all discovered step definitions across languages
@@ -15,6 +16,7 @@ import { invalidateBindings } from './bindings';
 let _stepDefinitions: StepDefinition[] = [];
 let _stepFiles: vscode.Uri[] = [];
 let _scanPromise: Promise<StepDefinition[]> | undefined;
+let _scanned = false;
 
 /** Directories never worth scanning for step definitions. */
 const SCAN_EXCLUDE =
@@ -32,6 +34,8 @@ const TS_SKIP_RE = /\.d\.tsx?$|[._](test|spec)\.[cm]?[jt]sx?$/;
 /**
  * Scan the workspace for Python and Rust BDD step definitions.
  * Concurrent calls share one in-flight scan; results are cached.
+ *
+ * Intentional-refresh API — use {@link whenStepsReady} in read paths.
  */
 export function scanStepDefinitions(): Promise<StepDefinition[]> {
   if (_scanPromise) {
@@ -43,6 +47,23 @@ export function scanStepDefinitions(): Promise<StepDefinition[]> {
   return _scanPromise;
 }
 
+/**
+ * Read-path freshness guarantee: resolves with the cached definitions once
+ * any scan has completed, joining an in-flight scan when one is running.
+ *
+ * Read paths (workspace symbols per keystroke, find-references, quick
+ * fixes…) previously called scanStepDefinitions — starting a full
+ * workspace sweep per invocation. Freshness after saves is already owned
+ * by registerStepRefreshOnSave's debounced rescan, so read paths only
+ * need "data exists".
+ */
+export function whenStepsReady(): Promise<StepDefinition[]> {
+  if (_scanned) {
+    return Promise.resolve(_stepDefinitions);
+  }
+  return scanStepDefinitions();
+}
+
 async function doScan(): Promise<StepDefinition[]> {
   const defs: StepDefinition[] = [];
   const files = new Map<string, vscode.Uri>();
@@ -51,8 +72,10 @@ async function doScan(): Promise<StepDefinition[]> {
   for (const uri of pyUris) {
     files.set(uri.fsPath, uri);
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      for (const d of extractPythonStepDefs(doc.getText())) {
+      // Raw read: scanning must not pin thousands of documents in the
+      // editor's document cache (memory) the way openTextDocument did.
+      const text = await readFileText(uri);
+      for (const d of extractPythonStepDefs(text)) {
         defs.push({ ...d, lang: 'python', file: uri });
       }
     } catch {
@@ -69,8 +92,13 @@ async function doScan(): Promise<StepDefinition[]> {
     }
     files.set(uri.fsPath, uri);
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      for (const d of extractRustStepDefs(doc.getText())) {
+      const text = await readFileText(uri);
+      // Cheap pre-filter mirrors the TS branch: skip files without any
+      // rstest-bdd attribute shape before running the line parser.
+      if (!/^\s*#\s*\[\s*(given|when|then)\s*\(/m.test(text)) {
+        continue;
+      }
+      for (const d of extractRustStepDefs(text)) {
         defs.push({ ...d, lang: 'rust', file: uri });
       }
     } catch {
@@ -88,8 +116,7 @@ async function doScan(): Promise<StepDefinition[]> {
     }
     files.set(uri.fsPath, uri);
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const text = doc.getText();
+      const text = await readFileText(uri);
       // Cheap pre-filter: skip files without step-call shapes entirely.
       if (!/\b(Given|When|Then|defineStep)\s*[(@]/.test(text)) {
         continue;
@@ -104,6 +131,7 @@ async function doScan(): Promise<StepDefinition[]> {
 
   _stepDefinitions = defs;
   _stepFiles = [...files.values()];
+  _scanned = true;
   return defs;
 }
 

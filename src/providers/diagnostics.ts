@@ -9,11 +9,14 @@ import * as vscode from 'vscode';
 import { parseStepLine, parseFeatureLine, parseScenarioLine, detectDocumentLanguage, isStructuralKeyword } from '../gherkin';
 import { compilePythonParsePattern } from '../patterns/pythonParsePattern';
 import { compileRustFormatPattern } from '../patterns/rustFormatPattern';
-import { getStepDefinitions, scanStepDefinitions } from '../steps';
+import { getStepDefinitions } from '../steps';
 import { stepMatchesDefinition } from '../matching';
 import { getBindingsForFeature, ensureBindings } from '../bindings';
 import { parseFeatureTags } from '../gherkin/tags';
+import { ensureTagIndex, getIndexedFile } from '../tagIndex';
 import { toggles, cfg } from '../config';
+import { readFileText } from '../utils';
+import { whenStepsReady } from '../steps';
 import type { StepDefinition } from '../model';
 
 export interface RawDiagnostic {
@@ -35,6 +38,8 @@ export function analyzeFeature(
     undefinedSteps: boolean;
     unboundFeatures: boolean;
   },
+  /** When provided, collects every parsed step text (for unused-def passes) */
+  usagesOut?: string[],
 ): RawDiagnostic[] {
   const dialect = detectDocumentLanguage(lines.join('\n'));
   const out: RawDiagnostic[] = [];
@@ -54,6 +59,7 @@ export function analyzeFeature(
     if (!parsed) {
       continue;
     }
+    usagesOut?.push(parsed.text);
     if (opts.undefinedSteps) {
       const inherited = parsed.type ?? inheritType(lines, i, dialect);
       const matches = countMatches(defs, parsed.text, inherited);
@@ -220,22 +226,30 @@ export class BddDiagnostics {
     if (!toggles.diagnostics()) {
       return;
     }
-    await Promise.all([scanStepDefinitions(), ensureBindings()]);
+    // whenStepsReady joins the save-driven in-flight scan (or uses the fresh
+    // cache) instead of starting a competing second workspace sweep.
+    // ensureTagIndex is memoized; tag problems are reused from it.
+    await Promise.all([whenStepsReady(), ensureBindings(), ensureTagIndex()]);
     const defs = getStepDefinitions();
 
-    // Feature files
+    // Feature files — single pass: step diagnostics + usage collection for
+    // the unused-definitions pass (no second sweep) + tag problems.
     const featureUris = await vscode.workspace.findFiles('**/*.feature', '**/{node_modules,target}/**', 3000);
+    const usages: string[] = [];
     for (const uri of featureUris) {
       try {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const lines = doc.getText().split(/\r?\n/);
+        const text = await readFileText(uri);
+        const lines = text.split(/\r?\n/);
         const raws = analyzeFeature(lines, defs, getBindingsForFeature(uri.fsPath).length > 0, {
           undefinedSteps: cfg('diagnostics.undefinedSteps', true),
           unboundFeatures: cfg('diagnostics.unboundFeatures', false),
-        });
+        }, usages);
         if (cfg('diagnostics.tags', true) && toggles.tags()) {
-          // Reuses the already-open document — no extra IO.
-          for (const p of parseFeatureTags(lines).problems) {
+          // Indexed files reuse their parsed problems; anything the index
+          // does not cover (e.g. excluded dirs) parses locally.
+          const entry = getIndexedFile(uri.fsPath);
+          const problems = entry ? entry.problems ?? [] : parseFeatureTags(lines).problems;
+          for (const p of problems) {
             raws.push({ range: p.range, severity: p.severity, message: p.message, code: p.code });
           }
         }
@@ -250,35 +264,35 @@ export class BddDiagnostics {
     // Definition files (pattern errors / duplicates / unused)
     const perFile = analyzeDefinitions(defs);
     if (cfg('diagnostics.unusedDefinitions', false)) {
-      await tagUnused(perFile, defs);
-    }
-    for (const [fsPath, raws] of perFile) {
+      tagUnused(perFile, defs, usages);
+    }    for (const [fsPath, raws] of perFile) {
       this._collection.set(vscode.Uri.file(fsPath), raws.map(toDiagnostic));
     }
   }
 }
 
-async function tagUnused(perFile: Map<string, RawDiagnostic[]>, defs: StepDefinition[]): Promise<void> {
-  // Collect every parsed step usage across features (parametric-aware:
-  // a definition counts as used when ANY usage text resolves to it).
-  const files = await vscode.workspace.findFiles('**/*.feature', '**/{node_modules,target}/**', 3000);
-  const usages: string[] = [];
-  for (const uri of files) {
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const dialect = detectDocumentLanguage(doc.getText());
-      for (const line of doc.getText().split(/\r?\n/)) {
-        const p = parseStepLine(line, dialect);
-        if (p) {
-          usages.push(p.text);
-        }
-      }
-    } catch {
-      // skip
-    }
-  }
+/**
+ * Mark definitions never referenced by any feature step.
+ *
+ * Formerly this re-swept every .feature file AND ran an O(defs × usages)
+ * matcher loop with uncached regex compilation. Now it consumes the usages
+ * collected during the same refresh pass, dedupes them, and fast-paths
+ * exact-match definitions through a Set before falling back to the
+ * (now memoized) full matcher.
+ */
+function tagUnused(
+  perFile: Map<string, RawDiagnostic[]>,
+  defs: StepDefinition[],
+  usages: readonly string[],
+): void {
+  const uniqueUsages = [...new Set(usages)];
+  const usageSet = new Set(uniqueUsages);
   for (const def of defs) {
-    if (usages.some(u => stepMatchesDefinition(u, def))) {
+    const used =
+      def.matcherKind === 'exact'
+        ? usageSet.has(def.text.trim()) || uniqueUsages.some(u => stepMatchesDefinition(u, def))
+        : uniqueUsages.some(u => stepMatchesDefinition(u, def));
+    if (used) {
       continue;
     }
     const arr = perFile.get(def.file.fsPath) ?? [];

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { existsSync } from 'fs';
 import type { FeatureBinding } from './model';
+import { readFileText } from './utils';
 import {
   extractPythonScenariosBindings,
   extractPythonScenarioBinding,
@@ -74,8 +75,10 @@ async function doRebuild(): Promise<void> {
   const pyUris = await vscode.workspace.findFiles('**/*.py', EXCLUDE, 5000);
   for (const uri of pyUris) {
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const text = doc.getText();
+      // Raw reads: rebuilds run after every binding-source save; pinning
+      // every candidate file in the document cache is unacceptable memory
+      // churn for a text filter + scanner pair.
+      const text = await readFileText(uri);
       if (!text.includes('scenarios') && !text.includes('scenario')) {
         continue;
       }
@@ -121,8 +124,7 @@ async function doRebuild(): Promise<void> {
   const rsUris = await vscode.workspace.findFiles('**/tests/**/*.rs', EXCLUDE, 5000);
   for (const uri of rsUris) {
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const text = doc.getText();
+      const text = await readFileText(uri);
       if (!text.includes('#[scenario')) {
         continue;
       }
@@ -157,8 +159,7 @@ async function doRebuild(): Promise<void> {
       continue;
     }
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const text = doc.getText();
+      const text = await readFileText(uri);
       if (!text.includes('loadFeature')) {
         continue;
       }
