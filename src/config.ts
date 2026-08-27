@@ -29,4 +29,6 @@ export const toggles = {
   tableFormat: () => cfg('enableTableFormatting', true),
   rename: () => cfg('enableRename', true),
   snippets: () => cfg('enableSnippets', true),
+  tags: () => cfg('enableTags', true),
+  featuresView: () => cfg('enableFeaturesView', true),
 };
