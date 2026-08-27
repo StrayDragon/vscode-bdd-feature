@@ -1,26 +1,36 @@
 import * as vscode from 'vscode';
-import {
-  parseScenarioLine,
-  parseFeatureLine,
-  detectDocumentLanguage,
-} from './gherkin';
-import { pytestTestName } from './testNames';
+import { parseFeatureLine, detectDocumentLanguage, parseScenarioLine } from './gherkin';
+import { parseFeatureTags } from './gherkin/tags';
 import { ensureBindings, getBindingsForFeature } from './bindings';
 import { getWorkspaceRoot } from './utils';
+import { detectTsBddRunner } from './tsBdd';
+import { toggles } from './config';
 import {
-  detectTsBddRunner,
-  cucumberCommand,
-  playwrightCommand,
-  escapeRegExpLiteral,
-} from './tsBdd';
+  buildScenarioCommands,
+  runScenarioCommands,
+} from './runTarget';
 
 /**
  * VS Code native Test Controller.
  *
  * - Lazy discovery: feature items resolve children on demand (big-repo perf)
- * - Tags: python / rust / unbound per scenario, filterable in the UI
+ * - Tags: binding language (python/rust/typescript/unbound) + every effective
+ *   Gherkin tag of the scenario, so the built-in test-explorer filter works
+ *   with `@smoke`, `@wip`, … out of the box
  * - Continuous run: re-executes the last request when watched files change
  */
+
+/** Interned TestTags — avoids re-allocating for repeated tags across items. */
+const testTagCache = new Map<string, vscode.TestTag>();
+function internedTag(name: string): vscode.TestTag {
+  let t = testTagCache.get(name);
+  if (!t) {
+    t = new vscode.TestTag(name);
+    testTagCache.set(name, t);
+  }
+  return t;
+}
+
 export class BddTestController {
   private _controller: vscode.TestController;
   private _disposables: vscode.Disposable[] = [];
@@ -85,24 +95,35 @@ export class BddTestController {
 
   /** Create the feature node without children — resolved lazily. */
   private _addFeatureItem(fileUri: vscode.Uri, doc: vscode.TextDocument): void {
-    const dialect = detectDocumentLanguage(doc.getText());
-    const lines = doc.getText().split(/\r?\n/);
+    const text = doc.getText();
+    const dialect = detectDocumentLanguage(text);
+    const lines = text.split(/\r?\n/);
 
     let featureName = fileUri.path.split('/').pop() ?? fileUri.fsPath;
+    let foundHeader = false;
     for (let i = 0; i < lines.length; i++) {
       const title = parseFeatureLine(lines[i], dialect);
       if (title !== undefined && title.trim()) {
         featureName = title;
+        foundHeader = true;
         break;
       }
     }
 
     const item = this._controller.createTestItem(fileUri.toString(), featureName, fileUri);
     item.canResolveChildren = true;
+    if (foundHeader && toggles.tags()) {
+      // Reuses the already-split lines — no extra IO.
+      const parsed = parseFeatureTags(lines);
+      const featureTags = parsed.nodes[0]?.kind === 'feature' ? parsed.nodes[0].effective : [];
+      if (featureTags.length > 0) {
+        item.tags = featureTags.map(internedTag);
+      }
+    }
     this._controller.items.add(item);
   }
 
-  /** Populate scenarios under a feature node, tagging by binding language. */
+  /** Populate scenarios under a feature node, tagging by binding + Gherkin tags. */
   private async _resolveFeatureItem(item: vscode.TestItem): Promise<void> {
     if (!item.uri) {
       return;
@@ -114,45 +135,39 @@ export class BddTestController {
     } catch {
       return;
     }
-    const dialect = detectDocumentLanguage(doc.getText());
     const lines = doc.getText().split(/\r?\n/);
+    const parsed = parseFeatureTags(lines);
 
-    let inExamples = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trimStart();
-      if (/^(Examples|例子)\s*:/i.test(trimmed)) {
-        inExamples = true;
-        continue;
+    let tsRunnerCache: Awaited<ReturnType<typeof detectTsBddRunner>> | undefined;
+    let tsRunnerProbed = false;
+    const probeTsRunner = async () => {
+      if (!tsRunnerProbed) {
+        tsRunnerProbed = true;
+        tsRunnerCache = await detectTsBddRunner(); // memoized upstream anyway
       }
-      if (inExamples) {
-        if (trimmed.startsWith('|') || trimmed === '') {
-          continue;
-        }
-        inExamples = false;
-      }
-      const name = parseScenarioLine(lines[i], dialect);
-      if (name === undefined) {
-        continue;
-      }
+      return tsRunnerCache;
+    };
+
+    for (const node of parsed.scenarios) {
+      const name = node.title ?? '';
       const child = this._controller.createTestItem(
-        `${item.uri.toString()}#scenario:${i}`,
+        `${item.uri.toString()}#scenario:${node.line}`,
         name,
         item.uri,
       );
-      child.range = new vscode.Range(i, 0, i, lines[i].length);
+      child.range = new vscode.Range(node.line, 0, node.line, lines[node.line].length);
+
       const bindings = getBindingsForFeature(item.uri.fsPath, name);
-      const tsRunner =
-        !bindings.length || bindings.some(b => b.lang === 'typescript')
-          ? await detectTsBddRunner()
-          : undefined;
-      const tag = bindings.some(b => b.lang === 'python')
+      const langTag = bindings.some(b => b.lang === 'python')
         ? 'python'
         : bindings.some(b => b.lang === 'rust')
           ? 'rust'
-          : bindings.some(b => b.lang === 'typescript') || tsRunner
+          : bindings.some(b => b.lang === 'typescript') || (await probeTsRunner())
             ? 'typescript'
             : 'unbound';
-      child.tags = [new vscode.TestTag(tag)];
+
+      const gherkinTags = toggles.tags() ? node.effective.map(internedTag) : [];
+      child.tags = [internedTag(langTag), ...gherkinTags];
       item.children.add(child);
     }
   }
@@ -253,8 +268,8 @@ export class BddTestController {
       return;
     }
     const doc = await vscode.workspace.openTextDocument(test.uri);
-    const line = doc.lineAt(test.range.start.line);
     const dialect = detectDocumentLanguage(doc.getText());
+    const line = doc.lineAt(test.range.start.line);
     const name = parseScenarioLine(line.text, dialect);
     if (name === undefined) {
       run.skipped(test);
@@ -262,104 +277,17 @@ export class BddTestController {
     }
     const root = getWorkspaceRoot();
 
-    // Build one command per binding; empty list → resolve via TS runner.
-    const buildCmds = async (): Promise<string[][]> => {
-      const bindings = getBindingsForFeature(test.uri!.fsPath, name);
-      if (bindings.length === 0) {
-        const runner = await detectTsBddRunner();
-        if (!runner) {
-          return [];
-        }
-        const nameArg = escapeRegExpLiteral(name);
-        return [
-          runner === 'cucumber-js'
-            ? [...cucumberCommand().split(/\s+/), test.uri!.fsPath, '--name', nameArg]
-            : [...playwrightCommand().split(/\s+/), '-g', nameArg],
-        ];
-      }
-      const cmds: string[][] = [];
-      for (const b of bindings) {
-        if (b.lang === 'python') {
-          const pytestCmd = vscode.workspace
-            .getConfiguration('bddFeature')
-            .get<string>('pytestCommand', 'pytest -q');
-          cmds.push([...pytestCmd.split(/\s+/), `${b.file.fsPath}::${pytestTestName(name)}`]);
-        } else if (b.lang === 'rust') {
-          const cargoCmd = vscode.workspace
-            .getConfiguration('bddFeature')
-            .get<string>('cargoTestCommand', 'cargo test');
-          cmds.push([
-            ...cargoCmd.split(/\s+/),
-            '--',
-            '--exact',
-            ...(b.rustTestFnName ? [b.rustTestFnName] : []),
-          ]);
-        } else {
-          // TS binding (jest-cucumber): the runnable unit is the binding file,
-          // executed by the user's jest/vitest — approximate via detected runner.
-          const runner = await detectTsBddRunner();
-          if (!runner) {
-            continue;
-          }
-          const nameArg = escapeRegExpLiteral(name);
-          cmds.push(
-            runner === 'cucumber-js'
-              ? [...cucumberCommand().split(/\s+/), test.uri!.fsPath, '--name', nameArg]
-              : [...playwrightCommand().split(/\s+/), '-g', nameArg],
-          );
-        }
-      }
-      return cmds;
-    };
-
-    const commands = await buildCmds();
+    const commands = await buildScenarioCommands(test.uri, name);
     if (commands.length === 0) {
       run.skipped(test);
       return;
     }
 
-    let allPassed = true;
-    const messages: string[] = [];
-    for (const cmd of commands) {
-      try {
-        const output = await exec(cmd, root);
-        const failed =
-          /test result:\s*FAILED/.test(output) ||
-          /[1-9]\d*\s+failed/.test(output) ||
-          /no tests ran|collected\s+0\s+items/.test(output) ||
-          /\b\d+\s+passed\b.*\b[1-9]\d*\s+failed\b/.test(output);
-        if (failed) {
-          allPassed = false;
-        }
-        messages.push(output.slice(-4000));
-      } catch (err) {
-        allPassed = false;
-        messages.push(err instanceof Error ? err.message : String(err).slice(0, 4000));
-      }
-    }
-
-    if (allPassed) {
+    const result = await runScenarioCommands(commands, root);
+    if (result.ok) {
       run.passed(test);
     } else {
-      run.failed(test, new vscode.TestMessage(messages.join('\n---\n').slice(0, 8000)));
+      run.failed(test, new vscode.TestMessage(result.output.slice(0, 8000)));
     }
   }
-}
-
-function exec(command: string[], cwd?: string): Promise<string> {
-  const cp = require('child_process') as typeof import('child_process');
-  return new Promise((resolve, reject) => {
-    cp.execFile(
-      command[0],
-      command.slice(1),
-      { cwd, maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error && !stdout) {
-          reject(new Error(stderr || String(error)));
-        } else {
-          resolve(stdout || stderr);
-        }
-      },
-    );
-  });
 }
