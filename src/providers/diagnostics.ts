@@ -12,6 +12,7 @@ import { compileRustFormatPattern } from '../patterns/rustFormatPattern';
 import { getStepDefinitions, scanStepDefinitions } from '../steps';
 import { stepMatchesDefinition } from '../matching';
 import { getBindingsForFeature, ensureBindings } from '../bindings';
+import { parseFeatureTags } from '../gherkin/tags';
 import { toggles, cfg } from '../config';
 import type { StepDefinition } from '../model';
 
@@ -232,6 +233,12 @@ export class BddDiagnostics {
           undefinedSteps: cfg('diagnostics.undefinedSteps', true),
           unboundFeatures: cfg('diagnostics.unboundFeatures', false),
         });
+        if (cfg('diagnostics.tags', true) && toggles.tags()) {
+          // Reuses the already-open document — no extra IO.
+          for (const p of parseFeatureTags(lines).problems) {
+            raws.push({ range: p.range, severity: p.severity, message: p.message, code: p.code });
+          }
+        }
         if (raws.length) {
           this._collection.set(uri, raws.map(r => toDiagnostic(r)));
         }

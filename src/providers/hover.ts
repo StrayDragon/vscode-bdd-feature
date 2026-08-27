@@ -8,6 +8,7 @@ import {
 import { findMatchingSteps } from '../steps';
 import { pytestTestName } from '../testNames';
 import { getBindingsForFeature, ensureBindings } from '../bindings';
+import { ensureTagIndex, indexedFiles } from '../tagIndex';
 import { toggles, cfg } from '../config';
 
 const LANG_ICON: Record<string, string> = { python: '🐍', rust: '🦀' };
@@ -42,7 +43,49 @@ export class BddHoverProvider implements vscode.HoverProvider {
       await ensureBindings();
       return this._scenarioHover(document.uri.fsPath, scenario);
     }
+
+    // ── `@tag` hover: usage across the workspace ──
+    const tag = tagAtPosition(line.text, position.character);
+    if (tag) {
+      return this._tagHover(tag);
+    }
     return undefined;
+  }
+
+  private async _tagHover(tag: string): Promise<vscode.Hover | undefined> {
+    if (!toggles.tags()) {
+      return undefined;
+    }
+    await ensureTagIndex();
+
+    let scenarios = 0;
+    const files = new Set<string>();
+    for (const f of indexedFiles()) {
+      let counted = false;
+      for (const s of f.scenarios) {
+        if (s.tags.includes(tag)) {
+          scenarios++;
+          counted = true;
+        }
+      }
+      if (counted || f.featureTags.includes(tag)) {
+        files.add(f.relPath);
+      }
+    }
+
+    const md = new vscode.MarkdownString();
+    md.appendMarkdown(`🏷️ **${tag}**\n\n`);
+    if (files.size === 0) {
+      md.appendMarkdown('_Not used anywhere yet_');
+    } else {
+      md.appendMarkdown(
+        `${scenarios} scenario${scenarios === 1 ? '' : 's'} · ${files.size} file${files.size === 1 ? '' : 's'}\n\n`,
+      );
+      md.appendMarkdown(
+        `Run all: \`**BDD: Run Scenarios by Tag Expression**\` → \`${tag}\``,
+      );
+    }
+    return new vscode.Hover(md);
   }
 
   private _stepHover(
@@ -91,4 +134,17 @@ export class BddHoverProvider implements vscode.HoverProvider {
     }
     return new vscode.Hover(md);
   }
+}
+
+/** The `@token` under the cursor, when the line is a tag line. */
+function tagAtPosition(lineText: string, character: number): string | undefined {
+  if (!lineText.trimStart().startsWith('@')) {
+    return undefined;
+  }
+  for (const m of lineText.matchAll(/\S+/g)) {
+    if (character >= m.index && character < m.index + m[0].length) {
+      return m[0].startsWith('@') ? m[0] : undefined;
+    }
+  }
+  return undefined;
 }

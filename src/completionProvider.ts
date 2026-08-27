@@ -6,11 +6,14 @@ import {
   resolveInheritedStepType,
 } from './gherkin';
 import { findCompletionCandidates } from './steps';
+import { ensureTagIndex, collectTagStats } from './tagIndex';
+import { toggles } from './config';
 
 /**
  * Completion for .feature files:
  * 1. Language-aware Gherkin keyword suggestions (driven by gherkin-languages.json)
  * 2. Step definition suggestions with snippet placeholders (Python + Rust defs)
+ * 3. Tag suggestions in `@tag` context (workspace-known tags, ranked by usage)
  */
 export class FeatureCompletionProvider implements vscode.CompletionItemProvider {
   async provideCompletionItems(
@@ -24,6 +27,12 @@ export class FeatureCompletionProvider implements vscode.CompletionItemProvider 
     const trimmedBefore = textBefore.trimStart();
     const indent = line.text.length - line.text.trimStart().length;
     const dialect = detectDocumentLanguage(document.getText());
+
+    // ── `@tag` context: complete known workspace tags ──
+    const tagToken = /(?:^|\s)(@[^\s]*)$/.exec(textBefore);
+    if (tagToken) {
+      return this._tagCompletions(tagToken[1], position);
+    }
 
     // ── Line start: structural + step keywords ──
     if (trimmedBefore.length === 0) {
@@ -116,5 +125,42 @@ export class FeatureCompletionProvider implements vscode.CompletionItemProvider 
         ? /\{(\w*)(?::[^}]*)?\}/g
         : /\{(\w*)(?::[^}]*)?\}/g;
     return pattern.replace(re, (_m, name) => `\${${idx++}:${name || 'value'}}`);
+  }
+
+  /**
+   * Known tags across the workspace, ranked by usage. `typed` includes the
+   * leading `@`; the insert text excludes it (already on the line).
+   */
+  private async _tagCompletions(
+    typed: string,
+    position: vscode.Position,
+  ): Promise<vscode.CompletionItem[]> {
+    if (!toggles.tags()) {
+      return [];
+    }
+    const prefix = typed.slice(1).toLowerCase();
+    let stats = collectTagStats();
+    if (stats.length === 0) {
+      await ensureTagIndex();
+      // Retry once after the first index build (cold workspace).
+      stats = collectTagStats();
+    }
+    return stats
+      .filter(s => s.tag.slice(1).toLowerCase().startsWith(prefix))
+      .slice(0, 200)
+      .map(s => {
+        const item = new vscode.CompletionItem(s.tag, vscode.CompletionItemKind.Variable);
+        item.insertText = s.tag.slice(1);
+        item.detail =
+          s.scenarios > 0
+            ? `${s.scenarios} scenario${s.scenarios === 1 ? '' : 's'} in ${s.files} file${s.files === 1 ? '' : 's'}`
+            : `${s.files} file${s.files === 1 ? '' : 's'}`;
+        item.sortText = `${String(Math.max(0, 999 - s.scenarios)).padStart(3, '0')}_${s.tag}`;
+        item.range = new vscode.Range(
+          new vscode.Position(position.line, position.character - typed.length + 1),
+          position,
+        );
+        return item;
+      });
   }
 }
