@@ -271,6 +271,53 @@ export function parseRuleLine(line: string): string | undefined {
   return parseStructuralByRole(line, 'rule');
 }
 
+export type StructuralRole =
+  | 'feature'
+  | 'rule'
+  | 'scenario'
+  | 'scenarioOutline'
+  | 'background'
+  | 'examples';
+
+/**
+ * Precompiled `^(?:kw1|kw2|…)\s*:` matcher for a structural role.
+ *
+ * Unlike parseStructuralByRole (which builds a RegExp per keyword per call),
+ * this compiles ONE module-cached alternation per role — hot document scans
+ * (tag indexing) pay a single `.exec` per line instead of dozens of
+ * regex constructions. Alternatives are longest-first so prefix keywords
+ * resolve identically to the per-keyword parsers.
+ *
+ * Match groups: [1] = keyword, [2] = title text after `:`.
+ */
+const HEADER_REGEX_CACHE = new Map<StructuralRole, RegExp>();
+
+export function structuralHeaderRegex(role: StructuralRole): RegExp {
+  let re = HEADER_REGEX_CACHE.get(role);
+  if (!re) {
+    const kws = (STRUCTURAL_LOOKUP.get(role) ?? []).map(escapeRe);
+    // Longest-first already guaranteed by STRUCTURAL_LOOKUP construction order;
+    // enforce again defensively since Map iteration order is insertion-based.
+    kws.sort(byLengthDesc);
+    // [1] = matched keyword, [2] = title text after ':'
+    re = new RegExp(`^[ \\t]*(${kws.join('|')})[ \\t]*:[ \\t]?(.*)$`);
+    HEADER_REGEX_CACHE.set(role, re);
+  }
+  return re;
+}
+
+/** One-shot structural header test + capture for hot loops. */
+export function matchStructuralHeader(
+  line: string,
+  role: StructuralRole,
+): { keyword: string; title: string } | undefined {
+  const m = structuralHeaderRegex(role).exec(line);
+  if (!m) {
+    return undefined;
+  }
+  return { keyword: m[1], title: (m[2] ?? '').trim() };
+}
+
 /** Parse a Background header line. */
 export function parseBackgroundLine(line: string): string | undefined {
   return parseStructuralByRole(line, 'background');
