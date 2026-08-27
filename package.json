@@ -176,6 +176,11 @@
         "title": "Copy Path",
         "category": "BDD",
         "icon": "$(copy)"
+      },
+      {
+        "command": "bddFeature._openDefinition",
+        "title": "BDD: Open Definition",
+        "category": "BDD"
       }
     ],
     "keybindings": [
@@ -258,6 +263,10 @@
         },
         {
           "command": "bddFeature.view.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "bddFeature._openDefinition",
           "when": "false"
         }
       ],

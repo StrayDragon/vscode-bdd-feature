@@ -26,7 +26,7 @@ import { BddFeaturesView, ScenarioTreeItem, TagTreeItem } from './providers/feat
 import { findStepUsages } from './refSearch';
 import { resetTsBddDetection } from './tsBdd';
 import { runScenariosByTagExpression } from './tagCommands';
-import { registerTagIndexWatchers, ensureTagIndex } from './tagIndex';
+import { registerTagIndexWatchers, rescanTagIndex } from './tagIndex';
 import type { StepDefinition } from './model';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -168,12 +168,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'bddFeature._openDefinition',
       async (uriString: string, line: number) => {
-        const uri = vscode.Uri.parse(uriString);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(doc, { preview: true });
-        const lineLength = doc.lineAt(Math.min(line, doc.lineCount - 1)).text.length;
-        editor.revealRange(new vscode.Range(line, 0, line, lineLength));
-        editor.selection = new vscode.Selection(line, 0, line, lineLength);
+        try {
+          const uri = vscode.Uri.parse(uriString);
+          const doc = await vscode.workspace.openTextDocument(uri);
+          const editor = await vscode.window.showTextDocument(doc, { preview: true });
+          // Stale index entries may point past EOF after edits — clamp.
+          const safeLine = Math.min(Math.max(0, line), doc.lineCount - 1);
+          const lineLength = doc.lineAt(safeLine).text.length;
+          editor.revealRange(new vscode.Range(safeLine, 0, safeLine, lineLength));
+          editor.selection = new vscode.Selection(safeLine, 0, safeLine, lineLength);
+        } catch {
+          // Unopenable/deleted target — fail silently rather than surfacing
+          // an error notification from a background tree click.
+        }
       },
     ),
     vscode.commands.registerCommand(
@@ -210,7 +217,7 @@ export function activate(context: vscode.ExtensionContext): void {
       featuresView.clearFilter(),
     ),
     vscode.commands.registerCommand('bddFeature.featuresView.refresh', () => {
-      void ensureTagIndex().then(() => featuresView.refresh());
+      void rescanTagIndex().then(() => featuresView.refresh());
     }),
     vscode.commands.registerCommand(
       'bddFeature.view.runScenario',

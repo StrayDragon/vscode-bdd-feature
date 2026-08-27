@@ -95,14 +95,26 @@ export function onTagIndexChange(listener: Listener): vscode.Disposable {
 
 // ── Public API ──
 
-/** Shared, single-flight full scan. Safe to call repeatedly. */
+/**
+ * Shared, memoized full scan. The result is cached until an explicit
+ * {@link resetTagIndex} / {@link rescanTagIndex} — incremental updates keep
+ * it fresh in between. Callers may await this on every access; after the
+ * first build it is a resolved promise.
+ *
+ * (Rebuilding per call here would create a feedback loop with the change
+ * notification: scan → notify → view refresh → getChildren → scan …)
+ */
 export function ensureTagIndex(): Promise<void> {
   if (!buildPromise) {
-    buildPromise = doFullScan().finally(() => {
-      buildPromise = undefined;
-    });
+    buildPromise = doFullScan();
   }
   return buildPromise;
+}
+
+/** Force a full rescan (manual refresh button). */
+export function rescanTagIndex(): Promise<void> {
+  resetTagIndex();
+  return ensureTagIndex();
 }
 
 export function getIndexedFile(fsPath: string): IndexedFile | undefined {
@@ -201,24 +213,35 @@ export function removeIndexedFile(fsPath: string): void {
   }
 }
 
-/** Drop all state (workspace folder change / tests). */
+/** Drop all state (workspace folder change / tests); next ensure rebuilds. */
 export function resetTagIndex(): void {
   entries.clear();
+  buildPromise = undefined;
   invalidateStatsCache();
 }
 
 // ── Internals ──
 
+/** Supersedes in-flight scans when reset/rescan happens mid-flight. */
+let scanGeneration = 0;
+
 async function doFullScan(): Promise<void> {
+  const gen = ++scanGeneration;
   entries.clear();
+  invalidateStatsCache();
   const uris = await vscode.workspace.findFiles('**/*.feature', EXCLUDE, MAX_FILES);
   // Bounded parallelism: keep event loop responsive on cold start without
   // serializing thousands of tiny reads.
   const BATCH = 64;
   for (let i = 0; i < uris.length; i += BATCH) {
+    if (gen !== scanGeneration) {
+      return; // superseded by a newer scan/reset
+    }
     await Promise.all(uris.slice(i, i + BATCH).map(readAndStore));
   }
-  notifySoon();
+  if (gen === scanGeneration) {
+    notifySoon();
+  }
 }
 
 async function readAndStore(uri: vscode.Uri): Promise<void> {

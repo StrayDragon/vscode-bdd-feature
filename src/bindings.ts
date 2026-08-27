@@ -34,24 +34,34 @@ interface IndexState {
 
 const state: IndexState = { byFeature: new Map(), sources: new Map() };
 let rebuild: Promise<void> | undefined;
+let dirty = true;
 
 export function invalidateBindings(): void {
   state.byFeature.clear();
   state.sources.clear();
+  dirty = true;
 }
 
-/** Rebuild the index (debounced/shared like step scanning). */
+/**
+ * Rebuild the index when stale; otherwise return the cached build.
+ *
+ * Callers run at keystroke-adjacent frequency (scenario hover, test-item
+ * resolution), so — like step scanning — the expensive workspace sweep must
+ * run once per invalidation, not once per call. Invalidation happens when
+ * binding sources are saved (see registerStepRefreshOnSave) and on
+ * workspace-folder changes.
+ */
 export function ensureBindings(): Promise<void> {
-  if (!rebuild) {
-    rebuild = doRebuild().finally(() => {
-      rebuild = undefined;
-    });
+  if (!rebuild || dirty) {
+    dirty = false;
+    rebuild = doRebuild();
   }
   return rebuild;
 }
 
 async function doRebuild(): Promise<void> {
-  invalidateBindings();
+  state.byFeature.clear();
+  state.sources.clear();
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!root) {
     return;

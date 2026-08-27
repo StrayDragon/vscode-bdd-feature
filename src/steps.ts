@@ -4,6 +4,7 @@ import { extractPythonStepDefs } from './scanners/pythonSteps';
 import { extractRustStepDefs } from './scanners/rustSteps';
 import { extractTsStepDefs } from './scanners/tsSteps';
 import { findMatches } from './matching';
+import { invalidateBindings } from './bindings';
 
 /**
  * Cache of all discovered step definitions across languages
@@ -168,10 +169,12 @@ export function registerStepRefreshOnSave(disposables: vscode.Disposable[]): voi
         clearTimeout(timer);
       }
       timer = setTimeout(() => {
+        invalidateBindings(); // bindings sweep reruns on next ensure
         void scanStepDefinitions();
       }, 300);
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      invalidateBindings();
       void scanStepDefinitions();
     }),
   );

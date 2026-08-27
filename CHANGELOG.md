@@ -6,6 +6,24 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Fixed
+
+- **BDD Features view feedback loop** (high CPU, endless loading): the tree's
+  `getChildren` triggered a full workspace tag rescan on every call, and each
+  scan notified the view to refresh — an endless scan→notify→refresh cycle.
+  `ensureTagIndex` now memoizes until an explicit reset/rescan (incremental
+  updates keep it fresh in between), with a generation guard superseding
+  in-flight scans.
+- **`ensureBindings` rebuilt on every call** (scenario hover, test-item
+  resolution each swept the whole workspace): now cached per invalidation;
+  binding-source saves and workspace-folder changes invalidate via the
+  existing refresh hook.
+- **"Actual command not found" on tree clicks**: a side effect of the ext
+  host being starved/restarted by the loop above — hardened regardless:
+  `bddFeature._openDefinition` is now a contributed command, clamps stale
+  out-of-range line numbers, and swallows unopenable-target errors instead
+  of error-notifying from background tree clicks.
+
 ### Added
 
 - **Gherkin `@tag` engine** (`enableTags`):
