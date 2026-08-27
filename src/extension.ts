@@ -22,8 +22,11 @@ import { BddHoverProvider } from './providers/hover';
 import { BddTableFormattingProvider } from './providers/tableFormat';
 import { BddRenameProvider } from './providers/rename';
 import { BddSnippetProvider } from './providers/snippets';
+import { BddFeaturesView, ScenarioTreeItem, TagTreeItem } from './providers/featuresView';
 import { findStepUsages } from './refSearch';
 import { resetTsBddDetection } from './tsBdd';
+import { runScenariosByTagExpression } from './tagCommands';
+import { registerTagIndexWatchers, ensureTagIndex } from './tagIndex';
 import type { StepDefinition } from './model';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -34,6 +37,7 @@ export function activate(context: vscode.ExtensionContext): void {
   void scanStepDefinitions();
   void ensureBindings();
   registerStepRefreshOnSave(context.subscriptions);
+  registerTagIndexWatchers(context.subscriptions);
 
   // ── Core providers (always on) ──
   context.subscriptions.push(
@@ -65,6 +69,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Test Controller ──
   context.subscriptions.push(new BddTestController());
+
+  // ── BDD Features explorer view (cross-directory management) ──
+  const featuresView = new BddFeaturesView(context.workspaceState);
+  featuresView.watch(context.subscriptions);
+  const treeView = vscode.window.createTreeView('bddFeature.featuresView', {
+    treeDataProvider: featuresView,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(treeView);
+  void featuresView.syncModeContext();
 
   // ── Toggleable UX mechanisms ──
   const diagnostics = new BddDiagnostics();
@@ -182,6 +196,51 @@ export function activate(context: vscode.ExtensionContext): void {
       codeLens.notifyRefresh();
       vscode.window.showInformationMessage('BDD step definitions refreshed');
     }),
+    // ── Tag features ──
+    vscode.commands.registerCommand('bddFeature.runByTag', (prefill?: string) =>
+      runScenariosByTagExpression(typeof prefill === 'string' ? prefill : undefined),
+    ),
+    vscode.commands.registerCommand('bddFeature.featuresView.toggleGrouping', () =>
+      featuresView.toggleGrouping(),
+    ),
+    vscode.commands.registerCommand('bddFeature.featuresView.filterByTag', () =>
+      featuresView.filterByExpression(),
+    ),
+    vscode.commands.registerCommand('bddFeature.featuresView.clearFilter', () =>
+      featuresView.clearFilter(),
+    ),
+    vscode.commands.registerCommand('bddFeature.featuresView.refresh', () => {
+      void ensureTagIndex().then(() => featuresView.refresh());
+    }),
+    vscode.commands.registerCommand(
+      'bddFeature.view.runScenario',
+      async (item: unknown, debug = false) => {
+        if (item instanceof ScenarioTreeItem) {
+          await runFromView(item.scenario.uriString, item.scenario.line, Boolean(debug));
+        }
+      },
+    ),
+    vscode.commands.registerCommand('bddFeature.view.debugScenario', (item: unknown) =>
+      vscode.commands.executeCommand('bddFeature.view.runScenario', item, true),
+    ),
+    vscode.commands.registerCommand('bddFeature.view.runTag', (item: unknown) => {
+      if (item instanceof TagTreeItem) {
+        return runScenariosByTagExpression(item.tag);
+      }
+      return Promise.resolve();
+    }),
+    vscode.commands.registerCommand('bddFeature.view.copyPath', (item: unknown) => {
+      const fsPath =
+        item instanceof ScenarioTreeItem
+          ? item.scenario.fsPath
+          : item instanceof TagTreeItem
+            ? undefined
+            : (item as { ref?: { fsPath: string } } | undefined)?.ref?.fsPath;
+      if (fsPath) {
+        return vscode.env.clipboard.writeText(fsPath);
+      }
+      return Promise.resolve();
+    }),
   );
 
   outputChannel.appendLine('BDD Feature extension activated');
@@ -194,6 +253,15 @@ function registerStepRefreshHook(disposables: vscode.Disposable[], cb: () => voi
       cb();
     }
   }));
+}
+
+/** Open a scenario at `line` and run/debug it (used by the features view). */
+async function runFromView(uriString: string, line: number, debug: boolean): Promise<void> {
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uriString));
+  const editor = await vscode.window.showTextDocument(doc, { preview: true });
+  editor.selection = new vscode.Selection(line, 0, line, doc.lineAt(line).text.length);
+  editor.revealRange(editor.selection, vscode.TextEditorRevealType.InCenter);
+  await runScenario(debug, line);
 }
 
 export function deactivate(): void {

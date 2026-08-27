@@ -67,6 +67,24 @@
         }
       }
     ],
+    "viewsContainers": {
+      "explorer": [
+        {
+          "id": "bddFeature",
+          "title": "BDD Feature",
+          "icon": "media/bdd-explorer.svg"
+        }
+      ]
+    },
+    "views": {
+      "bddFeature": [
+        {
+          "id": "bddFeature.featuresView",
+          "name": "BDD Features",
+          "when": "config.bddFeature.enableFeaturesView"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "bddFeature.createStep",
@@ -103,6 +121,61 @@
         "title": "BDD: Refresh Step Definitions",
         "category": "BDD",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "bddFeature.runByTag",
+        "title": "BDD: Run Scenarios by Tag Expression",
+        "category": "BDD",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "bddFeature.featuresView.toggleGrouping",
+        "title": "BDD Features: Toggle Grouping (Folder / Tag)",
+        "category": "BDD",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "bddFeature.featuresView.filterByTag",
+        "title": "BDD Features: Filter by Tag Expression",
+        "category": "BDD",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "bddFeature.featuresView.clearFilter",
+        "title": "BDD Features: Clear Tag Filter",
+        "category": "BDD",
+        "icon": "$(clear-all)",
+        "enablement": "bddFeaturesView.mode == expr"
+      },
+      {
+        "command": "bddFeature.featuresView.refresh",
+        "title": "BDD Features: Refresh Index",
+        "category": "BDD",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "bddFeature.view.runScenario",
+        "title": "Run Scenario",
+        "category": "BDD",
+        "icon": "$(play)"
+      },
+      {
+        "command": "bddFeature.view.debugScenario",
+        "title": "Debug Scenario",
+        "category": "BDD",
+        "icon": "$(debug)"
+      },
+      {
+        "command": "bddFeature.view.runTag",
+        "title": "Run Matching Scenarios",
+        "category": "BDD",
+        "icon": "$(play)"
+      },
+      {
+        "command": "bddFeature.view.copyPath",
+        "title": "Copy Path",
+        "category": "BDD",
+        "icon": "$(copy)"
       }
     ],
     "keybindings": [
@@ -170,6 +243,71 @@
         {
           "command": "bddFeature.debugFile",
           "when": "editorLangId == feature || editorLangId == python"
+        },
+        {
+          "command": "bddFeature.view.runScenario",
+          "when": "false"
+        },
+        {
+          "command": "bddFeature.view.debugScenario",
+          "when": "false"
+        },
+        {
+          "command": "bddFeature.view.runTag",
+          "when": "false"
+        },
+        {
+          "command": "bddFeature.view.copyPath",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "bddFeature.featuresView.filterByTag",
+          "when": "view == bddFeature.featuresView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "bddFeature.featuresView.clearFilter",
+          "when": "view == bddFeature.featuresView && bddFeaturesView.mode == expr",
+          "group": "navigation@2"
+        },
+        {
+          "command": "bddFeature.featuresView.toggleGrouping",
+          "when": "view == bddFeature.featuresView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "bddFeature.featuresView.refresh",
+          "when": "view == bddFeature.featuresView",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "bddFeature.view.runScenario",
+          "when": "view == bddFeature.featuresView && viewItem == bddViewScenario",
+          "group": "inline@1"
+        },
+        {
+          "command": "bddFeature.view.debugScenario",
+          "when": "view == bddFeature.featuresView && viewItem == bddViewScenario",
+          "group": "bddViewScenario@1"
+        },
+        {
+          "command": "bddFeature.view.copyPath",
+          "when": "view == bddFeature.featuresView && viewItem =~ /^bddView(Scenario|Feature)$/",
+          "group": "bddViewCommon@9"
+        },
+        {
+          "command": "bddFeature.view.runTag",
+          "when": "view == bddFeature.featuresView && viewItem == bddViewTag",
+          "group": "inline@1"
+        },
+        {
+          "command": "bddFeature.runByTag",
+          "when": "view == bddFeature.featuresView && viewItem == bddViewTag",
+          "group": "bddViewTag@2"
         }
       ]
     },
@@ -297,6 +435,21 @@
           "type": "boolean",
           "default": true,
           "description": "Gherkin skeleton snippets (scenario/outline/background/rule)"
+        },
+        "bddFeature.enableTags": {
+          "type": "boolean",
+          "default": true,
+          "description": "Parse @tags: workspace tag index, Test Explorer tags, tag completion/hover and tag diagnostics"
+        },
+        "bddFeature.enableFeaturesView": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the BDD Features explorer view (cross-directory feature/tag management)"
+        },
+        "bddFeature.diagnostics.tags": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report invalid, duplicate or misplaced @tag declarations"
         }
       }
     },

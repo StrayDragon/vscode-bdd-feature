@@ -6,6 +6,33 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+
+- **Gherkin `@tag` engine** (`enableTags`):
+  - Spec-faithful tag parsing (Feature / Rule / Scenario / Scenario Outline /
+    Examples; inheritance resolves downward; duplicate, misplaced and invalid
+    tags surface as diagnostics — `bddFeature.diagnostics.tags`).
+  - **Cucumber tag expressions**: `BDD: Run Scenarios by Tag Expression`
+    evaluates full infix boolean syntax (`@smoke and not @wip`,
+    `(@a or @b) and not @c`, legacy `~@draft`) with live input validation.
+  - Native runner dispatch: pytest-bdd → `pytest -m "<markers>"`,
+    cucumber-js → `--tags`, playwright-bdd → `--grep` (boolean expression
+    auto-translated to a lookahead regex); rust/unknown runners fall back to a
+    pre-filtered scenario QuickPick reusing the per-scenario run plumbing.
+  - **Test Explorer integration**: every effective Gherkin tag becomes a
+    test tag alongside the binding-language tag — filterable via the built-in
+    test-explorer filter UI.
+  - Tag completion in `@tag` context (ranked by usage) and hover cards with
+    workspace usage stats.
+- **BDD Features explorer view** (`enableFeaturesView`): cross-directory view
+  over every `.feature` in the Explorer sidebar with three modes — folder
+  tree, tag inventory (with scenario/file counts), and persisted tag-expression
+  filter. Context menus run/debug scenarios or all scenarios matching a tag;
+  clicks reveal the source line.
+- Shared run-target module (`runTarget.ts`) extracted from the test controller
+  so single-scenario execution and batch-by-tag runs use identical command
+  building.
+
 ## [0.3.0] - 2026-08-24
 
 ### Added

@@ -114,7 +114,21 @@ Given('用户 {string} 已经注册', function userNameAlreadyRegistered(name: s
 Native `vscode.TestController`:
 - **Lazy discovery** — feature nodes resolve scenarios on demand (fast on large repos)
 - **Tags** — each scenario is tagged `python` / `rust` / `typescript` / `unbound`; filter in the UI
+- **Gherkin tags (自 HEAD)** — every effective `@tag`(含继承) also becomes a test tag, so the built-in filter UI can select `@smoke`, `@wip`, … directly
 - **Continuous Run** — enable the built-in toggle; watched `.feature/.py/.rs/.ts/.js` changes re-run automatically
+
+### Tags & BDD Features View *(HEAD)*
+
+- **Tag expressions everywhere** — `BDD: Run Scenarios by Tag Expression` accepts full Cucumber syntax (`@smoke and not @wip`, `(@a or @b) and not @c`, legacy `~@draft`, 相邻原子视为 AND):
+  - pytest-bdd → `pytest -m "<markers>"`(Gherkin tag 即 pytest marker)
+  - cucumber-js → `--tags "<expr>"`
+  - playwright-bdd → `--grep "<auto-translated regex>"`
+  - 其他 runner(rust 等)回退为预筛场景 QuickPick,复用单场景运行通道
+- **BDD Features view**(Explorer 侧边栏,跨目录管理所有 `.feature`):
+  - **By Folder** 虚拟目录树 / **By Tag** 标签清单(带场景与文件计数)/ **Filter** 持久化标签表达式过滤
+  - 点击定位源码行;右键运行/调试场景、按 tag 批量运行、复制路径
+- **编辑器增强**:`@tag` 上下文补全(按使用频次排序)、tag 悬停卡片(工作区使用统计)、非法/重复/错位 tag 诊断
+- 增量索引:保存/文件变更只重扫单个文件,批量变更合并且限量,不拖垮大型仓库
 
 ### Diagnostics, Quick Fixes & UX Mechanisms *(HEAD;each independently toggleable)*
 
@@ -146,6 +160,8 @@ From a feature step → all other usages resolving to the same definition(s); fr
 | `BDD: Run File` / `Debug File` | — | Run whole file | v0.0.1 |
 | `BDD: Refresh Step Definitions` | — | Re-scan definitions & bindings | v0.0.1 |
 | `BDD: Bind this feature to a test` | — | Quick fix/command generating a binding stub | HEAD |
+| `BDD: Run Scenarios by Tag Expression` | — | Evaluate a Cucumber tag expression and run matches via the native runner filter (fallback QuickPick) | HEAD |
+| `BDD Features: Filter by Tag Expression` / `Toggle Grouping` / `Refresh Index` | — | BDD Features 视图标题栏按钮(Explorer 侧边栏) | HEAD |
 
 ## Configuration
 
@@ -159,10 +175,16 @@ From a feature step → all other usages resolving to the same definition(s); fr
 | `bddFeature.cucumberCommand` | `"npx cucumber-js"` | Base command for cucumber-js runs (file + `--name` appended) | HEAD |
 | `bddFeature.playwrightCommand` | `"npx playwright test"` | Base command for playwright-bdd runs (`-g <scenario>` appended) | HEAD |
 | `bddFeature.enable*` / `diagnostics.*` | 见上方机制表 | Per-mechanism toggles (diagnostics, code lens, symbols, hover, …) | HEAD |
+| `bddFeature.enableTags` | `true` | Parse `@tags`: workspace index, Test Explorer tags, completion/hover, tag diagnostics | HEAD |
+| `bddFeature.enableFeaturesView` | `true` | Show the BDD Features explorer view (cross-directory management) | HEAD |
+| `bddFeature.diagnostics.tags` | `true` | Report invalid / duplicate / misplaced tags in Problems | HEAD |
 
 ## Architecture Notes *(v0.2.0 重构确立;`providers/` 自 HEAD)*
 
-- `src/gherkin/` — spec-driven keyword engine (`gherkin-languages.json` is the single source of truth; regenerate grammar with `node scripts/generate-grammar.mjs`)
+- `src/gherkin/` — spec-driven keyword engine (`gherkin-languages.json` is the single source of truth; regenerate grammar with `node scripts/generate-grammar.mjs`) + pure tag engine (`gherkin/tags.ts`: parsing, inheritance, Cucumber tag-expression compiler, runner-filter translators)
+- `src/tagIndex.ts` — workspace tag index (incremental single-file updates, coalesced watcher batches, `fs.readFile` only — never inflates the document cache)
+- `src/tagCommands.ts` — run-by-tag dispatch (native filters first, QuickPick fallback)
+- `src/runTarget.ts` — shared scenario → CLI command builder used by both the test controller and tag runs
 - `src/patterns/` — faithful pattern compilers (Python `parse`, Rust format placeholders, Cucumber Expression)
 - `src/scanners/` — pure-text scanners for Python / Rust / TS&JS step definitions and scenario bindings
 - `src/tsBdd.ts` — cucumber-js vs playwright-bdd runner detection (memoized)
