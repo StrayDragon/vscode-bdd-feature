@@ -11,6 +11,10 @@ suite('Framework profile scoping', () => {
     assert.ok(!pathUnderRoot('other/x.feature', 'llmanspec/specs'));
   });
 
+  test('pathUnderRoot matches nested tests/bdd in monorepos', () => {
+    assert.ok(pathUnderRoot('apps/server/tests/bdd/steps/x.ts', 'tests/bdd'));
+  });
+
   test('definitionsForFeature filters to profile step roots', () => {
     const root = '/ws';
     const defs: StepDefinition[] = [

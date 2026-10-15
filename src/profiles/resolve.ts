@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { existsSync } from 'fs';
 import { cfg } from '../config';
-import { MEMBER_DSL_DEFAULTS } from './builtin';
+import { MEMBER_DSL_DEFAULTS, MEMBER_DSL_FEATURE_ROOTS } from './builtin';
 import type { ResolvedProfile, UserProfileConfig } from './types';
 
 const BUILTIN_PROFILES: Omit<ResolvedProfile, 'enabled'>[] = [
@@ -32,15 +32,26 @@ const BUILTIN_PROFILES: Omit<ResolvedProfile, 'enabled'>[] = [
     label: 'Custom member-DSL runner (bdd.given / when / thenStep)',
     languages: ['typescript'],
     stepRoots: [...MEMBER_DSL_DEFAULTS.stepRoots],
-    featureRoots: [...MEMBER_DSL_DEFAULTS.featureRoots],
+    featureRoots: [...MEMBER_DSL_FEATURE_ROOTS],
     bindingEntry: MEMBER_DSL_DEFAULTS.bindingEntry,
   },
 ];
 
 let cached: ResolvedProfile[] | undefined;
+/** Workspace-relative paths to `tests/bdd/run.test.ts` (incl. monorepo nesting). */
+let memberBindingEntries: string[] = [];
 
 export function invalidateProfileResolution(): void {
   cached = undefined;
+  memberBindingEntries = [];
+}
+
+export function setMemberBindingEntries(entries: string[]): void {
+  memberBindingEntries = entries;
+}
+
+export function getMemberBindingEntries(): readonly string[] {
+  return memberBindingEntries;
 }
 
 export function getResolvedProfiles(): ResolvedProfile[] {
@@ -94,11 +105,18 @@ export function normalizeRelPath(fsPath: string, workspaceRoot: string): string 
   return path.relative(workspaceRoot, fsPath).split(path.sep).join('/');
 }
 
-/** True when `rel` is equal to or nested under `rootPrefix` (root may end with /**). */
+/**
+ * True when `rel` is under `rootPrefix` (root may end with `/**`).
+ * Also matches nested monorepo layouts (`apps/server/tests/bdd/...` for `tests/bdd`).
+ */
 export function pathUnderRoot(rel: string, rootPrefix: string): boolean {
   const base = rootPrefix.replace(/\/\*\*$/, '').replace(/\*\*/g, '').replace(/\/$/, '');
   if (!base) {
     return true;
   }
-  return rel === base || rel.startsWith(`${base}/`);
+  if (rel === base || rel.startsWith(`${base}/`)) {
+    return true;
+  }
+  const nested = `/${base}/`;
+  return rel.includes(nested) || rel.endsWith(`/${base}`);
 }

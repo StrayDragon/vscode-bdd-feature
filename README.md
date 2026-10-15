@@ -194,6 +194,19 @@ VS Code test host (`out/test/**/*.test.js`, workspace = this repo):
   point at another checkout; the suite skips cleanly when absent). It fails
   loudly, listing any 动作词 that still resolves to no definition.
 
+### Sibling workspace verification
+
+`pnpm run verify:repos` (offline, no VS Code) scans step definitions with the
+same narrowed globs as the extension and reports undefined-step counts for
+sibling checkouts under `BDD_VERIFY_ROOT` (default: parent of this repo):
+
+| Repo | Stack | Gate |
+|------|-------|------|
+| `llman-sdd` | member-dsl-bdd | strict |
+| `xylitol` | rstest-bdd | `tests/bdd` strict; `llmanspec` informational |
+| `crystalith` | member-dsl-bdd | server `tests/bdd/features` strict; `llmanspec` informational |
+| `scalim` | (no step modules yet) | informational |
+
 ## Architecture Notes *(v0.2.0 重构确立;`providers/` 自 HEAD)*
 
 - `src/gherkin/` — spec-driven keyword engine (`gherkin-languages.json` is the single source of truth; regenerate grammar with `node scripts/generate-grammar.mjs`) + pure tag engine (`gherkin/tags.ts`: parsing, inheritance, Cucumber tag-expression compiler, runner-filter translators)

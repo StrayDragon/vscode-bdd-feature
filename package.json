@@ -500,6 +500,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test",
+    "verify:repos": "pnpm run compile-tests && node scripts/verify-sibling-repos.mjs",
     "update-gherkin-languages": "node scripts/update-gherkin-languages.mjs && node scripts/generate-grammar.mjs"
   },
   "devDependencies": {

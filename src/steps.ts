@@ -10,6 +10,7 @@ import {
   definitionsForFeature,
   invalidateProfileResolution,
 } from './profiles';
+import { setMemberBindingEntries } from './profiles/resolve';
 import type { ExtractedStepPartial, ProfileId } from './profiles';
 
 /**
@@ -53,6 +54,17 @@ async function doScan(): Promise<StepDefinition[]> {
   const files = new Map<string, vscode.Uri>();
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
+  if (root) {
+    const entries = await vscode.workspace.findFiles(
+      '**/tests/bdd/run.test.ts',
+      SCAN_EXCLUDE,
+      32,
+    );
+    setMemberBindingEntries(
+      entries.map(u => path.relative(root, u.fsPath).split(path.sep).join('/')),
+    );
+  }
+
   for (const contributor of BUILTIN_SCANNERS) {
     const uris = await findFilesUnique(contributor.globs);
     for (const uri of uris) {
@@ -60,12 +72,12 @@ async function doScan(): Promise<StepDefinition[]> {
       if (contributor.shouldSkipFile(relPath)) {
         continue;
       }
-      files.set(uri.fsPath, uri);
       try {
         const text = await readFileText(uri);
         if (!contributor.filePrefilter(text)) {
           continue;
         }
+        files.set(uri.fsPath, uri);
         for (const d of contributor.extract(text, relPath)) {
           const frameworkId = frameworkForPartial(contributor.id, d);
           const lang = contributor.languages[0];

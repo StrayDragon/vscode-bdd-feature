@@ -1,5 +1,10 @@
 import type { StepDefinition } from '../model';
-import { getResolvedProfiles, normalizeRelPath, pathUnderRoot } from './resolve';
+import {
+  getMemberBindingEntries,
+  getResolvedProfiles,
+  normalizeRelPath,
+  pathUnderRoot,
+} from './resolve';
 
 /**
  * Step definitions relevant to a given .feature file.
@@ -43,12 +48,20 @@ export function syntheticBindingForFeature(
     return undefined;
   }
   const rel = normalizeRelPath(featureFsPath, workspaceRoot);
-  for (const p of getResolvedProfiles()) {
-    if (!p.bindingEntry || !p.featureRoots.some(r => pathUnderRoot(rel, r))) {
-      continue;
-    }
-    const entry = p.bindingEntry;
-    return { entryRel: entry, line: 0 };
+  const inMemberFeature = getResolvedProfiles().some(
+    p => p.id === 'member-dsl-bdd' && p.featureRoots.some(r => pathUnderRoot(rel, r)),
+  );
+  if (!inMemberFeature) {
+    return undefined;
+  }
+  const candidates = [
+    ...getMemberBindingEntries(),
+    ...getResolvedProfiles()
+      .map(p => p.bindingEntry)
+      .filter((e): e is string => Boolean(e)),
+  ];
+  for (const entry of candidates) {
+    return { entryRel: entry.replace(/\\/g, '/'), line: 0 };
   }
   return undefined;
 }
