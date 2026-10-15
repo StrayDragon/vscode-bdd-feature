@@ -60,7 +60,7 @@ export interface StepScanContributor {
   languages: StepLang[];
   globs: string[];
   shouldSkipFile: (relPath: string) => boolean;
-  filePrefilter: (source: string) => boolean;
+  filePrefilter: (source: string, relPath: string) => boolean;
   extract: (source: string, relPath: string) => ExtractedStepPartial[];
   defaultFrameworkId: ProfileId;
 }

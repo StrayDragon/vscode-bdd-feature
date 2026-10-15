@@ -1,6 +1,7 @@
 import { extractPythonStepDefs } from '../scanners/pythonSteps';
 import { extractRustStepDefs } from '../scanners/rustSteps';
 import { extractTsStepDefs } from '../scanners/tsSteps';
+import { mightContainStepDefs } from '../search/fingerprints';
 import type { StepScanContributor } from './types';
 
 export const SCAN_EXCLUDE =
@@ -33,7 +34,7 @@ export const BUILTIN_SCANNERS: StepScanContributor[] = [
     languages: ['python'],
     globs: PY_STEP_GLOBS,
     shouldSkipFile: () => false,
-    filePrefilter: () => true,
+    filePrefilter: (source, relPath) => mightContainStepDefs(relPath ?? '', source),
     extract: (source) => extractPythonStepDefs(source),
     defaultFrameworkId: 'pytest-bdd',
   },
@@ -42,7 +43,7 @@ export const BUILTIN_SCANNERS: StepScanContributor[] = [
     languages: ['rust'],
     globs: RS_STEP_GLOBS,
     shouldSkipFile: (rel) => /(^|\/)(target|out|dist)(\/|$)/.test(rel),
-    filePrefilter: (source) => /^\s*#\s*\[\s*(given|when|then)\s*\(/m.test(source),
+    filePrefilter: (source, relPath) => mightContainStepDefs(relPath ?? '', source),
     extract: (source) => extractRustStepDefs(source),
     defaultFrameworkId: 'rstest-bdd',
   },
@@ -58,9 +59,7 @@ export const BUILTIN_SCANNERS: StepScanContributor[] = [
         /(^|\/)(node_modules|dist|out|\.features-gen)(\/|$)/.test(rel) || TS_SKIP_RE.test(rel)
       );
     },
-    filePrefilter: (source) =>
-      /\b(Given|When|Then|defineStep)\s*[(@]/.test(source) ||
-      /\.(given|when|then|thenStep)\s*\(\s*['"`]/.test(source),
+    filePrefilter: (source, relPath) => mightContainStepDefs(relPath ?? '', source),
     extract: (source) => extractTsStepDefs(source),
     defaultFrameworkId: 'cucumber-js',
   },

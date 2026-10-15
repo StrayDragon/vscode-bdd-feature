@@ -194,18 +194,13 @@ VS Code test host (`out/test/**/*.test.js`, workspace = this repo):
   point at another checkout; the suite skips cleanly when absent). It fails
   loudly, listing any 动作词 that still resolves to no definition.
 
-### Sibling workspace verification
+### Workspace scan verification (generic)
 
-`pnpm run verify:repos` (offline, no VS Code) scans step definitions with the
-same narrowed globs as the extension and reports undefined-step counts for
-sibling checkouts under `BDD_VERIFY_ROOT` (default: parent of this repo):
-
-| Repo | Stack | Gate |
-|------|-------|------|
-| `llman-sdd` | member-dsl-bdd | strict |
-| `xylitol` | rstest-bdd | `tests/bdd` strict; `llmanspec` informational |
-| `crystalith` | member-dsl-bdd | server `tests/bdd/features` strict; `llmanspec` informational |
-| `scalim` | (no step modules yet) | informational |
+`pnpm run verify:repos` uses the same **search plane** as the extension (no
+per-project config). By default it scans every directory under the parent
+folder that contains `.feature` files; override with CLI paths or
+`BDD_VERIFY_PATHS`. Optional `--fail-on-undefined` for CI. Metrics include
+`fpSkip` (fingerprint rejected before full parse) and `readMiB`.
 
 ## Architecture Notes *(v0.2.0 重构确立;`providers/` 自 HEAD)*
 
@@ -214,8 +209,9 @@ sibling checkouts under `BDD_VERIFY_ROOT` (default: parent of this repo):
 - `src/tagCommands.ts` — run-by-tag dispatch (native filters first, QuickPick fallback)
 - `src/runTarget.ts` — shared scenario → CLI command builder used by both the test controller and tag runs
 - `src/patterns/` — faithful pattern compilers (Python `parse`, Rust format placeholders, Cucumber Expression)
-- `src/profiles/` — framework profiles (discovery scope, feature↔step roots, synthetic bindings); built-ins: pytest-bdd, rstest-bdd, cucumber-js, member-dsl-bdd; override via `bddFeature.profiles`
-- `src/scanners/` — pure-text scanners per language (step patterns + static bindings); Gherkin stays in `src/gherkin/`
+- `src/search/` — **search plane**: path/glob enumeration → per-language fingerprint (cheap regex) → bounded read → `src/scanners/` parse backends; shared by the extension and `verify:repos`
+- `src/profiles/` — framework profiles (matcher semantics, feature↔step scoping, bindings); built-ins: pytest-bdd, rstest-bdd, cucumber-js, member-dsl-bdd; override via `bddFeature.profiles`
+- `src/scanners/` — language-specific step pattern extractors (regex/structure parsers); Gherkin stays in `src/gherkin/`
 - `src/tsBdd.ts` — cucumber-js vs playwright-bdd runner detection (memoized)
 - `src/bindings.ts` — feature → binding index powering navigation and test running
 - `src/providers/` — toggleable UX mechanisms (diagnostics, code lens, symbols, hover, …)

@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import type { StepDefinition, StepType } from './model';
 import { findMatches } from './matching';
 import { invalidateBindings } from './bindings';
-import { readFileText, getWorkspaceRoot } from './utils';
+import { getWorkspaceRoot } from './utils';
 import {
   BUILTIN_SCANNERS,
   SCAN_EXCLUDE,
@@ -11,7 +11,12 @@ import {
   invalidateProfileResolution,
 } from './profiles';
 import { setMemberBindingEntries } from './profiles/resolve';
-import type { ExtractedStepPartial, ProfileId } from './profiles';
+import { allStepGlobs, isScanCandidateRelPath } from './search/nodeScan';
+import { enumerateCandidateRelPaths } from './search/rgEnumerate';
+import { scanFileAtPath } from './search/scanFile';
+import { IncrementalScanCache } from './search/incremental';
+import { clearPatternInternPool } from './search/intern';
+import type { PipelineExtracted } from './search/pipeline';
 
 /**
  * Cache of all discovered step definitions across framework profiles.
@@ -21,6 +26,7 @@ let _stepDefinitions: StepDefinition[] = [];
 let _stepFiles: vscode.Uri[] = [];
 let _scanPromise: Promise<StepDefinition[]> | undefined;
 let _scanned = false;
+const _fileCache = new IncrementalScanCache<StepDefinition>();
 
 export { SCAN_EXCLUDE, TS_SKIP_RE } from './profiles/builtin';
 
@@ -41,68 +47,46 @@ export function whenStepsReady(): Promise<StepDefinition[]> {
   return scanStepDefinitions();
 }
 
-function frameworkForPartial(contributorId: ProfileId, partial: ExtractedStepPartial): ProfileId {
-  if (partial.matcherKind === 'parse-lite') {
-    return 'member-dsl-bdd';
-  }
-  return contributorId;
+function partialsToStepDefs(uri: vscode.Uri, partials: PipelineExtracted[]): StepDefinition[] {
+  return partials.map(d => ({
+    type: d.type,
+    text: d.text,
+    matcherKind: d.matcherKind,
+    decoratorLine: d.decoratorLine,
+    functionLine: d.functionLine ?? d.decoratorLine,
+    functionName: d.functionName,
+    patternSelection: d.patternSelection,
+    lang: d.lang,
+    frameworkId: d.frameworkId,
+    profileId: d.frameworkId,
+    file: uri,
+  }));
 }
 
-async function doScan(): Promise<StepDefinition[]> {
-  invalidateProfileResolution();
-  const defs: StepDefinition[] = [];
-  const files = new Map<string, vscode.Uri>();
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+async function scanOneFile(absPath: string, relPath: string): Promise<StepDefinition[]> {
+  const uri = vscode.Uri.file(absPath);
+  const partials = await scanFileAtPath(absPath, relPath, BUILTIN_SCANNERS);
+  return partialsToStepDefs(uri, partials);
+}
 
-  if (root) {
-    const entries = await vscode.workspace.findFiles(
-      '**/tests/bdd/run.test.ts',
-      SCAN_EXCLUDE,
-      32,
-    );
-    setMemberBindingEntries(
-      entries.map(u => path.relative(root, u.fsPath).split(path.sep).join('/')),
-    );
-  }
-
-  for (const contributor of BUILTIN_SCANNERS) {
-    const uris = await findFilesUnique(contributor.globs);
-    for (const uri of uris) {
-      const relPath = root ? path.relative(root, uri.fsPath).split(path.sep).join('/') : uri.fsPath;
-      if (contributor.shouldSkipFile(relPath)) {
-        continue;
-      }
-      try {
-        const text = await readFileText(uri);
-        if (!contributor.filePrefilter(text)) {
-          continue;
-        }
-        files.set(uri.fsPath, uri);
-        for (const d of contributor.extract(text, relPath)) {
-          const frameworkId = frameworkForPartial(contributor.id, d);
-          const lang = contributor.languages[0];
-          defs.push({
-            ...d,
-            lang,
-            frameworkId,
-            profileId: frameworkId,
-            file: uri,
-            functionLine: d.functionLine ?? d.decoratorLine,
-          });
-        }
-      } catch {
-        // unreadable file — skip
-      }
-    }
-  }
-
-  _stepDefinitions = defs;
-  _stepFiles = [...files.values()];
+function syncFromFileCache(): void {
+  _stepDefinitions = _fileCache.flattenDefs();
+  _stepFiles = _fileCache.absPaths().map(p => vscode.Uri.file(p));
   _scanned = true;
-  return defs;
 }
 
-async function findFilesUnique(globs: string[]): Promise<vscode.Uri[]> {
+async function discoverMemberBindingRelPaths(root: string): Promise<void> {
+  const entries = await vscode.workspace.findFiles(
+    '**/tests/bdd/run.test.ts',
+    SCAN_EXCLUDE,
+    32,
+  );
+  setMemberBindingEntries(
+    entries.map(u => path.relative(root, u.fsPath).split(path.sep).join('/')),
+  );
+}
+
+async function enumerateViaWorkspaceApi(globs: string[]): Promise<vscode.Uri[]> {
   const seen = new Set<string>();
   const out: vscode.Uri[] = [];
   for (const g of globs) {
@@ -115,6 +99,35 @@ async function findFilesUnique(globs: string[]): Promise<vscode.Uri[]> {
     }
   }
   return out;
+}
+
+async function doScan(): Promise<StepDefinition[]> {
+  invalidateProfileResolution();
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  if (root) {
+    await discoverMemberBindingRelPaths(root);
+    const globs = allStepGlobs();
+    const { paths } = enumerateCandidateRelPaths(root, globs);
+    const files = paths
+      .filter(isScanCandidateRelPath)
+      .map(rel => ({ absPath: path.join(root, rel), relPath: rel }));
+    await _fileCache.reconcile(files, scanOneFile);
+  } else {
+    _fileCache.clear();
+    const files: { absPath: string; relPath: string }[] = [];
+    for (const uri of await enumerateViaWorkspaceApi(allStepGlobs())) {
+      const relPath = uri.fsPath;
+      if (!isScanCandidateRelPath(relPath)) {
+        continue;
+      }
+      files.push({ absPath: uri.fsPath, relPath });
+    }
+    await _fileCache.reconcile(files, scanOneFile);
+  }
+
+  syncFromFileCache();
+  return _stepDefinitions;
 }
 
 export function getStepDefinitions(): StepDefinition[] {
@@ -158,6 +171,20 @@ export function findCompletionCandidates(
   });
 }
 
+async function refreshSavedStepFile(doc: vscode.TextDocument): Promise<void> {
+  const root = getWorkspaceRoot();
+  if (!root) {
+    await scanStepDefinitions();
+    return;
+  }
+  const rel = path.relative(root, doc.uri.fsPath).split(path.sep).join('/');
+  if (!isScanCandidateRelPath(rel)) {
+    return;
+  }
+  await _fileCache.upsertOne(doc.uri.fsPath, rel, scanOneFile);
+  syncFromFileCache();
+}
+
 export function registerStepRefreshOnSave(disposables: vscode.Disposable[]): void {
   let timer: NodeJS.Timeout | undefined;
   const watched = new Set(['python', 'rust', 'typescript', 'javascript']);
@@ -172,12 +199,15 @@ export function registerStepRefreshOnSave(disposables: vscode.Disposable[]): voi
       timer = setTimeout(() => {
         invalidateBindings();
         invalidateProfileResolution();
-        void scanStepDefinitions();
+        void refreshSavedStepFile(doc);
       }, 300);
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       invalidateBindings();
       invalidateProfileResolution();
+      _fileCache.clear();
+      clearPatternInternPool();
+      _scanned = false;
       void scanStepDefinitions();
     }),
   );
