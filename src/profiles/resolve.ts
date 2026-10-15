@@ -1,0 +1,104 @@
+import * as path from 'path';
+import * as vscode from 'vscode';
+import { existsSync } from 'fs';
+import { cfg } from '../config';
+import { MEMBER_DSL_DEFAULTS } from './builtin';
+import type { ResolvedProfile, UserProfileConfig } from './types';
+
+const BUILTIN_PROFILES: Omit<ResolvedProfile, 'enabled'>[] = [
+  {
+    id: 'pytest-bdd',
+    label: 'pytest-bdd (Python)',
+    languages: ['python'],
+    stepRoots: [],
+    featureRoots: [],
+  },
+  {
+    id: 'rstest-bdd',
+    label: 'rstest-bdd (Rust)',
+    languages: ['rust'],
+    stepRoots: [],
+    featureRoots: [],
+  },
+  {
+    id: 'cucumber-js',
+    label: 'cucumber-js / playwright-bdd / jest-cucumber (TS/JS)',
+    languages: ['typescript'],
+    stepRoots: [],
+    featureRoots: [],
+  },
+  {
+    id: 'member-dsl-bdd',
+    label: 'Custom member-DSL runner (bdd.given / when / thenStep)',
+    languages: ['typescript'],
+    stepRoots: [...MEMBER_DSL_DEFAULTS.stepRoots],
+    featureRoots: [...MEMBER_DSL_DEFAULTS.featureRoots],
+    bindingEntry: MEMBER_DSL_DEFAULTS.bindingEntry,
+  },
+];
+
+let cached: ResolvedProfile[] | undefined;
+
+export function invalidateProfileResolution(): void {
+  cached = undefined;
+}
+
+export function getResolvedProfiles(): ResolvedProfile[] {
+  if (cached) {
+    return cached;
+  }
+  const user = cfg<UserProfileConfig[]>('profiles', []);
+  const byId = new Map<string, ResolvedProfile>();
+
+  for (const base of BUILTIN_PROFILES) {
+    byId.set(base.id, { ...base, enabled: true });
+  }
+
+  for (const u of user) {
+    if (!u.id) {
+      continue;
+    }
+    const existing = byId.get(u.id);
+    const merged: ResolvedProfile = {
+      id: u.id,
+      label: u.label ?? existing?.label ?? u.id,
+      enabled: u.enabled ?? existing?.enabled ?? true,
+      languages: existing?.languages ?? ['typescript'],
+      stepRoots: u.stepRoots ?? existing?.stepRoots ?? [],
+      featureRoots: u.featureRoots ?? existing?.featureRoots ?? [],
+      bindingEntry: u.bindingEntry ?? existing?.bindingEntry,
+    };
+    byId.set(u.id, merged);
+  }
+
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (root && memberDslLayoutPresent(root)) {
+    const m = byId.get('member-dsl-bdd');
+    if (m) {
+      m.enabled = true;
+    }
+  }
+
+  cached = [...byId.values()].filter(p => p.enabled);
+  return cached;
+}
+
+function memberDslLayoutPresent(workspaceRoot: string): boolean {
+  const specs = path.join(workspaceRoot, 'llmanspec', 'specs');
+  const bdd = path.join(workspaceRoot, 'tests', 'bdd');
+  return existsSync(specs) && existsSync(bdd);
+}
+
+/** Workspace-relative path uses forward slashes. */
+export function normalizeRelPath(fsPath: string, workspaceRoot: string): string {
+  return path.relative(workspaceRoot, fsPath).split(path.sep).join('/');
+}
+
+/** True when `rel` is equal to or nested under `rootPrefix` (root may end with /**). */
+export function pathUnderRoot(rel: string, rootPrefix: string): boolean {
+  const base = rootPrefix.replace(/\/\*\*$/, '').replace(/\*\*/g, '').replace(/\/$/, '');
+  if (!base) {
+    return true;
+  }
+  return rel === base || rel.startsWith(`${base}/`);
+}

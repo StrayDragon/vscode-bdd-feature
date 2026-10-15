@@ -28,7 +28,7 @@ export class BddRenameProvider implements vscode.RenameProvider {
     if (document.languageId === 'feature') {
       const parsed = parseStepLine(line.text, dialect);
       if (parsed) {
-        const defs = findMatchingSteps(parsed.text);
+        const defs = findMatchingSteps(parsed.text, undefined, document.uri.fsPath);
         if (defs.length === 0 || !defs.every(d => d.matcherKind === 'exact')) {
           return undefined;
         }
@@ -67,7 +67,7 @@ export class BddRenameProvider implements vscode.RenameProvider {
     if (document.languageId === 'feature') {
       const parsed = parseStepLine(line.text, dialect);
       if (parsed) {
-        const defs = findMatchingSteps(parsed.text);
+        const defs = findMatchingSteps(parsed.text, undefined, document.uri.fsPath);
         if (defs.length === 0) {
           throw new Error('No definition matches this step');
         }

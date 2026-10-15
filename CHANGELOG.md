@@ -54,6 +54,16 @@ Systematic hot-path audit (ranked by measured impact; suite wall time 11s → 0.
   `bddFeature._openDefinition` is now a contributed command, clamps stale
   out-of-range line numbers, and swallows unopenable-target errors instead
   of error-notifying from background tree clicks.
+- **Custom runner member-DSL step definitions were invisible** — TS/JS step
+  files registered via `bdd.given` / `bdd.when` / `bdd.thenStep(...)` (e.g.
+  llman-sdd's `tests/bdd` runner) were never discovered: the TS scan globs only
+  matched `*step*` or `features/**` paths, and the pre-filter + extractor only
+  recognized statement-level `Given(...)` / decorators. The TS/JS scan now
+  covers all `*.ts/*.js` sources (cost bounded by the per-file pre-filter, the
+  exclude globs and the findFiles cap — mirroring the Rust branch), and the
+  extractor recognizes object-member step registration
+  (`obj.given|when|then|thenStep|Given|When|Then("…")`) while still ignoring
+  object method definitions and promise `.then(...)` chains.
 
 ### Added
 
@@ -81,6 +91,29 @@ Systematic hot-path audit (ranked by measured impact; suite wall time 11s → 0.
 - Shared run-target module (`runTarget.ts`) extracted from the test controller
   so single-scenario execution and batch-by-tag runs use identical command
   building.
+- **TS member-DSL step scanner + real-repo verification tests**:
+  - `extractTsStepDefs` recognizes object-member registration used by custom
+    BDD runners (`bdd.given` / `bdd.when` / `bdd.thenStep`); authored patterns
+    with `{name}` / `{name:d}` placeholders use the **parse-lite** matcher
+    (literal parentheses, not Cucumber optional groups).
+- **Framework profile layer** (`src/profiles/`):
+  - Step definitions carry `frameworkId` / `profileId`; matching semantics are
+    per-profile, not per language.
+  - Built-in profiles: `pytest-bdd`, `rstest-bdd`, `cucumber-js`, `member-dsl-bdd`
+    (llman-sdd-style `tests/bdd` + `llmanspec/specs` scoping and synthetic
+    binding via `tests/bdd/run.test.ts`).
+  - `bddFeature.profiles` merges user overrides (stepRoots, featureRoots,
+    bindingEntry). Feature-file diagnostics and go-to-definition scope defs
+    to the active profile for that feature path.
+  - Rule description prose under `规则:` / `Rule:` is no longer mistaken for
+    executable steps in undefined-step diagnostics.
+  - `src/test/suite/core.test.ts` — member-DSL scanner + parse-lite matching.
+  - `src/test/suite/llmansddSteps.test.ts` — verification suite that **actively
+    reads the sibling `../llman-sdd` repository** (override with
+    `LLMAN_SDD_PATH`; the suite skips cleanly when the checkout is absent):
+    asserts every real step module passes the scan selection policy, extracts
+    definitions, and that every 动作词 in every `llmanspec/specs/*.feature`
+    resolves to a definition (zero `undefinedStep` diagnostics).
 
 ## [0.3.0] - 2026-08-24
 

@@ -7,6 +7,7 @@ import { createStepDefinition } from './createStep';
 import { runScenario, runFile } from './runner';
 import { BddTestController } from './testController';
 import { scanStepDefinitions, registerStepRefreshOnSave } from './steps';
+import { invalidateProfileResolution } from './profiles';
 import { ensureBindings } from './bindings';
 import { bindFeatureCommand } from './bindFeature';
 import { onConfigChange, toggles } from './config';
@@ -140,6 +141,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // React to toggles / workspace changes
   onConfigChange(() => {
+    invalidateProfileResolution();
+    void scanStepDefinitions();
     codeLens.notifyRefresh();
     if (!toggles.diagnostics()) {
       diagnostics.clear();

@@ -7,6 +7,12 @@ export type StepLang = 'python' | 'rust' | 'typescript';
 export type StepType = 'given' | 'when' | 'then' | 'step';
 
 /**
+ * BDD stack that produced a step definition (see src/profiles/).
+ * Distinct from StepLang: TypeScript may be cucumber-js, playwright-bdd, or member-dsl-bdd.
+ */
+export type FrameworkId = string;
+
+/**
  * How a definition's text should be interpreted when matching feature steps.
  *   exact  — verbatim equality (pytest-bdd bare string / rstest without braces)
  *   parse  — Python `parse` format string ({x}, {x:d}, ...)
@@ -14,11 +20,16 @@ export type StepType = 'given' | 'when' | 'then' | 'step';
  *   re     — regular expression
  *   cexpr  — Cucumber Expression ({string}, {int}, {}, …) used by
  *            cucumber-js / playwright-bdd string patterns
+ *   parse-lite — custom runner placeholders only ({name}, {name:d}); literals incl. ()
  */
-export type StepMatcherKind = 'exact' | 'parse' | 'cfparse' | 're' | 'cexpr';
+export type StepMatcherKind = 'exact' | 'parse' | 'cfparse' | 're' | 'cexpr' | 'parse-lite';
 
 export interface StepDefinition {
   lang: StepLang;
+  /** Framework profile that registered this definition. */
+  frameworkId: FrameworkId;
+  /** Profile used for feature↔step scoping (usually equals frameworkId). */
+  profileId?: string;
   type: StepType;
   matcherKind: StepMatcherKind;
   /** Step pattern text as written in the definition */
@@ -45,6 +56,7 @@ export interface StepDefinition {
 /** A binding between a feature(-scenario) and executable test code. */
 export interface FeatureBinding {
   lang: StepLang;
+  frameworkId?: FrameworkId;
   /** File containing the binding call/attribute */
   file: vscode.Uri;
   /** Line of the scenarios()/scenario() call or #[scenario] attribute */

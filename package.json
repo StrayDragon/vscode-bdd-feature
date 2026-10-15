@@ -365,6 +365,25 @@
           "default": null,
           "description": "Base directory for .feature paths in scenarios() calls (mirrors pytest-bdd's bdd_features_base_dir ini). Defaults to each binding file's directory."
         },
+        "bddFeature.profiles": {
+          "type": "array",
+          "default": [],
+          "description": "Override or extend built-in BDD framework profiles (step/feature roots, binding entry). Built-ins: pytest-bdd, rstest-bdd, cucumber-js, member-dsl-bdd.",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string" },
+              "enabled": { "type": "boolean" },
+              "label": { "type": "string" },
+              "stepRoots": { "type": "array", "items": { "type": "string" } },
+              "featureRoots": { "type": "array", "items": { "type": "string" } },
+              "bindingEntry": { "type": "string" },
+              "stepGlobs": { "type": "array", "items": { "type": "string" } },
+              "fileFingerprint": { "type": "string" }
+            }
+          }
+        },
         "bddFeature.enableDiagnostics": {
           "type": "boolean",
           "default": true,

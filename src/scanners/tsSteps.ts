@@ -20,8 +20,16 @@
  *   // jest-cucumber feature-level binding
  *   defineFeature(loadFeature('./features/login.feature'), ({ Given }) => { … });
  *
+ *   // custom runners exposing object-member registration (e.g. llman-sdd's
+ *   // tests/bdd runner): patterns follow the runner's own placeholder DSL
+ *   // ({name} / {name:d}), which the cexpr matcher degrades to lazy any-text
+ *   bdd.given('一个 config 内容 extra_skills 含 "{value}"', (ctx, value) => { … });
+ *   bdd.when('运行 v2 的 config 概览', (ctx) => { … });
+ *   bdd.thenStep('报错条数至多 {count:d}', (ctx, count) => { … });
+ *
  * Matching kinds produced:
- *   string/template-literal pattern → 'cexpr' (Cucumber Expression)
+ *   bare Given/When/Then string     → 'cexpr' (Cucumber Expression)
+ *   bdd.given / .when / .thenStep  → 'parse-lite' (runner placeholder DSL)
  *   /regex/ literal pattern         → 're'
  */
 
@@ -52,11 +60,27 @@ export interface TsFeatureBinding {
   line: number;
 }
 
-/** Statement-position calls only — avoids strings/comments containing "Given(". */
+/**
+ * Statement-position calls/decorators AND object-member DSL calls.
+ *
+ * The member-call family (`bdd.given('…')`, `world.when('…')`,
+ * `api.thenStep('…')`) covers custom runners — e.g. llman-sdd's tests/bdd
+ * runner — that expose step registration as methods instead of bare
+ * `Given(…)` calls.
+ *
+ * Groups: [1] decorator '@', [2] bare keyword (Given/…/defineStep),
+ *         [3] member method name (given/when/then/thenStep/Given/When/Then).
+ *
+ * Only the bare-keyword forms may start the line; member forms REQUIRE an
+ * object prefix, so object method DEFINITIONS like `given(p, fn) {` are never
+ * mistaken for registrations. A promise-chain `.then((…) => …)` may match the
+ * regex but is dropped downstream: extractFirstArg only accepts a string or
+ * regex literal as the first argument.
+ */
 const CALL_START_RE =
-  /^[\s]*(@)?(Given|When|Then|And|But|Step|defineStep|DefineStep)\s*\(/;
+  /^[\s]*(?:export\s+)?(?:await\s+)?(@)?(?:(Given|When|Then|And|But|Step|defineStep|DefineStep)|[A-Za-z_$][\w$]*\s*\.\s*(given|when|then|thenStep|Given|When|Then))\s*\(/;
 
-/** Type keyword → canonical step type. And/But are not exported by frameworks; treat as generic. */
+/** Type keyword/method → canonical step type. And/But are not exported by frameworks; treat as generic. */
 const TYPE_BY_NAME: Record<string, StepType> = {
   Given: 'given',
   When: 'when',
@@ -64,6 +88,11 @@ const TYPE_BY_NAME: Record<string, StepType> = {
   Step: 'step',
   defineStep: 'step',
   DefineStep: 'step',
+  // Object-member DSL (custom runners, e.g. llman-sdd's tests/bdd runner).
+  given: 'given',
+  when: 'when',
+  then: 'then',
+  thenStep: 'then',
 };
 
 /**
@@ -78,7 +107,7 @@ function joinCall(
 ): { buf: string; argIdx: number } | undefined {
   let buf = '';
   let depth = 0;
-  const max = Math.min(lines.length, startLine + 40);
+  const max = Math.min(lines.length, startLine + 800);
   for (let j = startLine; j < max; j++) {
     const from = j === startLine ? openParenCol : 0;
     buf += lines[j].slice(from) + '\n';
@@ -148,7 +177,7 @@ function skipString(s: string, start: number): number {
 }
 
 interface FirstArg {
-  kind: 'cexpr' | 're';
+  kind: 'cexpr' | 're' | 'parse-lite';
   content: string;
   contentStart: number;
   contentEnd: number;
@@ -255,7 +284,8 @@ export function extractTsStepDefs(source: string): ExtractedTsStepDef[] {
       continue;
     }
     const isDecorator = m[1] === '@';
-    const typeName = m[2];
+    const isMemberDsl = Boolean(m[3]);
+    const typeName = m[2] ?? m[3] ?? '';
     const openParenCol = lines[i].indexOf('(');
 
     const joined = joinCall(lines, i, openParenCol);
@@ -275,7 +305,7 @@ export function extractTsStepDefs(source: string): ExtractedTsStepDef[] {
     defs.push({
       type: TYPE_BY_NAME[typeName] ?? 'step',
       text: arg.content,
-      matcherKind: arg.kind,
+      matcherKind: isMemberDsl ? 'parse-lite' : arg.kind === 're' ? 're' : 'cexpr',
       decoratorLine: i,
       functionLine: impl.line,
       functionName: impl.name,

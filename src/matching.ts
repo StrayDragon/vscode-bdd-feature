@@ -21,6 +21,7 @@
 import { matchPythonParsePattern } from './patterns/pythonParsePattern';
 import { matchRustFormatPattern } from './patterns/rustFormatPattern';
 import { matchCucumberExpression } from './patterns/cucumberExpressionPattern';
+import { matchParseLitePattern } from './patterns/parseLitePattern';
 import type { StepDefinition } from './model';
 
 /** Gherkin outline placeholder, e.g. `<user_id>` (no whitespace inside). */
@@ -102,6 +103,11 @@ export function stepMatchesDefinition(featureStep: string, def: StepDefinition):
       }
       break;
     }
+    case 'parse-lite':
+      if (matchParseLitePattern(feature, def.text) !== null) {
+        return true;
+      }
+      break;
   }
   // Outline template fallback — every kind benefits (runtime substitution).
   return outlineTemplateMatches(feature, def.text);

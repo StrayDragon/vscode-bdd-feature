@@ -9,6 +9,8 @@ import {
 } from './scanners/pythonSteps';
 import { extractRustScenarioBindings } from './scanners/rustSteps';
 import { extractTsFeatureBindings } from './scanners/tsSteps';
+import { syntheticBindingForFeature } from './profiles';
+import { getWorkspaceRoot } from './utils';
 
 /**
  * Index mapping .feature files to the code that binds them:
@@ -255,7 +257,31 @@ export function getBindingsForFeature(
     return direct;
   }
   if (scenarioName) {
-    return state.byFeature.get(featureFsPath) ?? [];
+    const fileLevel = state.byFeature.get(featureFsPath) ?? [];
+    if (fileLevel.length) {
+      return fileLevel;
+    }
+  } else {
+    const fileLevel = state.byFeature.get(featureFsPath) ?? [];
+    if (fileLevel.length) {
+      return fileLevel;
+    }
+  }
+
+  const root = getWorkspaceRoot();
+  const synthetic = syntheticBindingForFeature(featureFsPath, root);
+  if (synthetic && root) {
+    const entry = path.join(root, synthetic.entryRel);
+    if (existsSync(entry)) {
+      return [
+        {
+          lang: 'typescript',
+          frameworkId: 'member-dsl-bdd',
+          file: vscode.Uri.file(entry),
+          line: synthetic.line,
+        },
+      ];
+    }
   }
   return [];
 }

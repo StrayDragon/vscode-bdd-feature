@@ -141,6 +141,7 @@ suite('Diagnostics analysis core', () => {
   const defs = [
     {
       lang: 'python' as const,
+      frameworkId: 'pytest-bdd',
       type: 'given' as const,
       matcherKind: 'exact' as const,
       text: '已初始化的系统',
@@ -149,6 +150,7 @@ suite('Diagnostics analysis core', () => {
     },
     {
       lang: 'python' as const,
+      frameworkId: 'pytest-bdd',
       type: 'given' as const,
       matcherKind: 'parse' as const,
       text: '用户 {uid:d} 存在',
@@ -181,6 +183,19 @@ suite('Diagnostics analysis core', () => {
     const on = analyzeFeature(lines, [], false, { undefinedSteps: false, unboundFeatures: true });
     assert.strictEqual(on.length, 1);
     assert.strictEqual(on[0].code, 'unboundFeature');
+  });
+
+  test('rule description prose starting with When is not an executable step', () => {
+    const lines = [
+      '# language: zh-CN',
+      '功能: t',
+      '  规则: 状态流转门禁',
+      '    当 specs.check_transitions 为 true 时,MUST 自动扫描所有场景大纲',
+      '    场景: 合法表通过',
+      '      假如 已初始化的系统',
+    ];
+    const out = analyzeFeature(lines, defs, true, { undefinedSteps: true, unboundFeatures: false });
+    assert.ok(!out.some(d => d.message.includes('check_transitions')));
   });
 
   test('table row containing a colon does not break And/But inheritance', () => {

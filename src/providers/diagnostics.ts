@@ -6,10 +6,20 @@
  */
 
 import * as vscode from 'vscode';
-import { parseStepLine, parseFeatureLine, parseScenarioLine, detectDocumentLanguage, isStructuralKeyword } from '../gherkin';
+import {
+  parseStepLine,
+  parseFeatureLine,
+  parseScenarioLine,
+  parseRuleLine,
+  parseBackgroundLine,
+  detectDocumentLanguage,
+  isStructuralKeyword,
+} from '../gherkin';
 import { compilePythonParsePattern } from '../patterns/pythonParsePattern';
 import { compileRustFormatPattern } from '../patterns/rustFormatPattern';
 import { getStepDefinitions } from '../steps';
+import { definitionsForFeature } from '../profiles';
+import { getWorkspaceRoot } from '../utils';
 import { stepMatchesDefinition } from '../matching';
 import { getBindingsForFeature, ensureBindings } from '../bindings';
 import { parseFeatureTags } from '../gherkin/tags';
@@ -44,15 +54,33 @@ export function analyzeFeature(
   const dialect = detectDocumentLanguage(lines.join('\n'));
   const out: RawDiagnostic[] = [];
   let hasScenario = false;
+  /** Rule description prose may start with step-like keywords — not executable steps. */
+  let inRuleDescription = false;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
+    if (parseFeatureLine(raw, dialect) !== undefined) {
+      inRuleDescription = false;
+      continue;
+    }
+    if (parseRuleLine(raw) !== undefined) {
+      inRuleDescription = true;
+      continue;
+    }
     const scenarioTitle = parseScenarioLine(raw, dialect);
     if (scenarioTitle !== undefined) {
       hasScenario = true;
+      inRuleDescription = false;
+      continue;
+    }
+    if (parseBackgroundLine(raw) !== undefined) {
+      inRuleDescription = false;
       continue;
     }
     if (isStructuralKeyword(raw)) {
+      continue;
+    }
+    if (inRuleDescription) {
       continue;
     }
     const parsed = parseStepLine(raw, dialect);
@@ -230,7 +258,8 @@ export class BddDiagnostics {
     // cache) instead of starting a competing second workspace sweep.
     // ensureTagIndex is memoized; tag problems are reused from it.
     await Promise.all([whenStepsReady(), ensureBindings(), ensureTagIndex()]);
-    const defs = getStepDefinitions();
+    const allDefs = getStepDefinitions();
+    const workspaceRoot = getWorkspaceRoot();
 
     // Feature files — single pass: step diagnostics + usage collection for
     // the unused-definitions pass (no second sweep) + tag problems.
@@ -240,6 +269,7 @@ export class BddDiagnostics {
       try {
         const text = await readFileText(uri);
         const lines = text.split(/\r?\n/);
+        const defs = definitionsForFeature(uri.fsPath, allDefs, workspaceRoot);
         const raws = analyzeFeature(lines, defs, getBindingsForFeature(uri.fsPath).length > 0, {
           undefinedSteps: cfg('diagnostics.undefinedSteps', true),
           unboundFeatures: cfg('diagnostics.unboundFeatures', false),
@@ -262,9 +292,9 @@ export class BddDiagnostics {
     }
 
     // Definition files (pattern errors / duplicates / unused)
-    const perFile = analyzeDefinitions(defs);
+    const perFile = analyzeDefinitions(allDefs);
     if (cfg('diagnostics.unusedDefinitions', false)) {
-      tagUnused(perFile, defs, usages);
+      tagUnused(perFile, allDefs, usages);
     }    for (const [fsPath, raws] of perFile) {
       this._collection.set(vscode.Uri.file(fsPath), raws.map(toDiagnostic));
     }

@@ -95,7 +95,7 @@ export class BddHoverProvider implements vscode.HoverProvider {
     type: 'given' | 'when' | 'then' | undefined,
   ): vscode.Hover {
     void document;
-    const matches = findMatchingSteps(text, type);
+    const matches = findMatchingSteps(text, type, document.uri.fsPath);
     if (matches.length === 0) {
       return new vscode.Hover(
         new vscode.MarkdownString(`⚠️ **No matching definition** for \`${text}\``),

@@ -53,7 +53,7 @@ export class FeatureCompletionProvider implements vscode.CompletionItemProvider 
       parsed.type ??
       resolveInheritedStepType(n => document.lineAt(n).text, position.line, dialect);
 
-    const candidates = findCompletionCandidates(parsed.text, stepType);
+    const candidates = findCompletionCandidates(parsed.text, stepType, document.uri.fsPath);
     return this._stepCompletions(candidates, parsed.keyword, line, position);
   }
 

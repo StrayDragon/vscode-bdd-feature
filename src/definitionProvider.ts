@@ -40,7 +40,7 @@ export class FeatureDefinitionProvider implements vscode.DefinitionProvider {
       parsed.type ??
       resolveInheritedStepType(n => document.lineAt(n).text, position.line, dialect);
 
-    const matches = findMatchingSteps(parsed.text, stepType);
+    const matches = findMatchingSteps(parsed.text, stepType, document.uri.fsPath);
     if (matches.length === 0) {
       return [];
     }

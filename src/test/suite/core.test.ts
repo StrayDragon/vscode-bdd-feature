@@ -21,6 +21,7 @@ import { extractPythonStepDefs, extractPythonScenariosBindings } from '../../sca
 import { extractRustStepDefs, extractRustScenarioBindings } from '../../scanners/rustSteps';
 import { extractTsStepDefs, extractTsFeatureBindings } from '../../scanners/tsSteps';
 import { stepMatchesDefinition } from '../../matching';
+import { matchParseLitePattern } from '../../patterns/parseLitePattern';
 import type { StepDefinition } from '../../model';
 import { alignTablesText, displayWidth, splitRow } from '../../providers/tableFormat';
 import { pytestTestName } from '../../testNames';
@@ -408,6 +409,18 @@ suite('TypeScript/JS step scanner (cucumber-js · playwright-bdd · jest-cucumbe
     assert.deepStrictEqual(extractTsStepDefs(src), []);
   });
 
+  test('member-DSL registrations use parse-lite matcher (literal parentheses)', () => {
+    const src = `bdd.thenStep('目标分支获得 archive(sdd) 提交且目录改名', (ctx) => {});\n`;
+    const defs = extractTsStepDefs(src);
+    assert.strictEqual(defs.length, 1);
+    assert.strictEqual(defs[0].matcherKind, 'parse-lite');
+    assert.ok(matchParseLitePattern('目标分支获得 archive(sdd) 提交且目录改名', defs[0].text));
+    assert.strictEqual(
+      matchCucumberExpression('目标分支获得 archive(sdd) 提交且目录改名', defs[0].text),
+      null,
+    );
+  });
+
   test('jest-cucumber loadFeature bindings extraction', () => {
     const bindings = extractTsFeatureBindings(
       [
@@ -459,6 +472,8 @@ suite('Real-world distilled regressions (acceptance findings)', () => {
       lang: 'python' | 'rust' | 'typescript' = 'python',
     ): StepDefinition => ({
       lang,
+      frameworkId:
+        lang === 'typescript' ? 'cucumber-js' : lang === 'rust' ? 'rstest-bdd' : 'pytest-bdd',
       type: 'given',
       matcherKind,
       text,
@@ -476,6 +491,7 @@ suite('Real-world distilled regressions (acceptance findings)', () => {
   test('concrete steps never fall through to shape matching (no false positives)', () => {
     const def: StepDefinition = {
       lang: 'typescript',
+      frameworkId: 'cucumber-js',
       type: 'given',
       matcherKind: 'cexpr',
       text: 'login as {string}',
@@ -489,6 +505,7 @@ suite('Real-world distilled regressions (acceptance findings)', () => {
   test('template with adjacent placeholders stays literal on surrounding text', () => {
     const def: StepDefinition = {
       lang: 'rust',
+      frameworkId: 'rstest-bdd',
       type: 'when',
       matcherKind: 'parse',
       text: '订单 {oid} 状态改为 {status}',
@@ -504,6 +521,7 @@ suite('Real-world distilled regressions (acceptance findings)', () => {
     // only resolvable at runtime; editor-side it must still match concrete rows.
     const def: StepDefinition = {
       lang: 'python',
+      frameworkId: 'pytest-bdd',
       type: 'given',
       matcherKind: 're',
       text: '修订表 (?P<tab>{_YEAR_TAB_PATTERN}) 学年 (?P<years>\\d+-\\d+) 金额 (?P<amount>.+)',

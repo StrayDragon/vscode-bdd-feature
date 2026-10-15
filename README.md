@@ -1,6 +1,6 @@
 # BDD Feature
 
-Enhanced VS Code extension for BDD `.feature` files with **spec-driven, multilingual** Gherkin support (80+ languages from the official `gherkin-languages.json`, including English / 简体中文 / 繁體中文), step navigation for **pytest-bdd (Python)**, **rstest-bdd (Rust)** and **cucumber-js / playwright-bdd / jest-cucumber (TypeScript & JavaScript)**, and test integration.
+Enhanced VS Code extension for BDD `.feature` files with **spec-driven, multilingual** Gherkin support (80+ languages from the official `gherkin-languages.json`, including English / 简体中文 / 繁體中文), step navigation for **pytest-bdd (Python)**, **rstest-bdd (Rust)** and **cucumber-js / playwright-bdd / jest-cucumber (TypeScript & JavaScript)**, plus custom BDD runners that register steps via member calls (`bdd.given` / `bdd.when` / `bdd.thenStep` — e.g. llman-sdd's `tests/bdd` runner), and test integration.
 
 > 版本标注约定:各 feature 首次引入的版本随标题标注;`HEAD` 表示尚未发布(下个版本交付)。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -53,6 +53,9 @@ Keyword parsing is **never hardcoded**: the runtime engine (`src/gherkin/`) buil
 
 - Python: `@given(parsers.parse("订单 {action} 已提交"))` (exact / parse / cfparse / re matchers)
 - Rust: `#[given("配置了 mock 模型 {name:string}")]`
+- TypeScript / JavaScript: `Given("…")` / `@When("…")` statements and
+  object-member registration (`bdd.when("…")`, `bdd.thenStep("…")` — custom
+  runners such as llman-sdd's `tests/bdd`); see the matcher table below
 - Scenario headers jump to their binding site (`scenarios("...")` call or `#[scenario(...)]` attribute)
 
 Matching semantics are faithful to the underlying frameworks *(v0.2.0)*:
@@ -65,6 +68,7 @@ Matching semantics are faithful to the underlying frameworks *(v0.2.0)*:
 | rstest-bdd | format pattern | `{}`/unknown → lazy, `{x:string}` quoted-string (quotes stripped), `{x:u32/i32/f64}` numeric |
 | cucumber-js / playwright-bdd | Cucumber Expression | `{string}` quoted, `{int}`, `{float}`, `{word}`, `{}` lazy; optional `(s)` & alternative `a/b`; `\` escapes; duplicate param names safe |
 | cucumber-js / playwright-bdd | `/regex/` literal | regular expression |
+| member-dsl-bdd（`bdd.given/when/thenStep`，如 llman-sdd） | parse-lite | 仅 `{name}` / `{name:d}` 为占位符；括号等其余字符按字面量匹配（非 Cucumber Expression） |
 
 Multi-line decorators/attributes with parens inside string literals are handled by a string-aware scanner. The cucumber-expression engine is a hand-ported, dependency-free compiler with conformance tests probed against `@cucumber/cucumber-expressions` 20.x (see `src/patterns/cucumberExpressionPattern.ts`).
 
@@ -179,6 +183,17 @@ From a feature step → all other usages resolving to the same definition(s); fr
 | `bddFeature.enableFeaturesView` | `true` | Show the BDD Features explorer view (cross-directory management) | HEAD |
 | `bddFeature.diagnostics.tags` | `true` | Report invalid / duplicate / misplaced tags in Problems | HEAD |
 
+## Testing
+
+`pnpm test` runs `pretest` (compile + lint) and launches the mocha suite in the
+VS Code test host (`out/test/**/*.test.js`, workspace = this repo):
+
+- `src/test/suite/core.test.ts` — member-DSL scanner + parse-lite matching.
+- `src/test/suite/llmansddSteps.test.ts` — **real-repository verification** that
+  actively reads the sibling `../llman-sdd` checkout (set `LLMAN_SDD_PATH` to
+  point at another checkout; the suite skips cleanly when absent). It fails
+  loudly, listing any 动作词 that still resolves to no definition.
+
 ## Architecture Notes *(v0.2.0 重构确立;`providers/` 自 HEAD)*
 
 - `src/gherkin/` — spec-driven keyword engine (`gherkin-languages.json` is the single source of truth; regenerate grammar with `node scripts/generate-grammar.mjs`) + pure tag engine (`gherkin/tags.ts`: parsing, inheritance, Cucumber tag-expression compiler, runner-filter translators)
@@ -186,11 +201,12 @@ From a feature step → all other usages resolving to the same definition(s); fr
 - `src/tagCommands.ts` — run-by-tag dispatch (native filters first, QuickPick fallback)
 - `src/runTarget.ts` — shared scenario → CLI command builder used by both the test controller and tag runs
 - `src/patterns/` — faithful pattern compilers (Python `parse`, Rust format placeholders, Cucumber Expression)
-- `src/scanners/` — pure-text scanners for Python / Rust / TS&JS step definitions and scenario bindings
+- `src/profiles/` — framework profiles (discovery scope, feature↔step roots, synthetic bindings); built-ins: pytest-bdd, rstest-bdd, cucumber-js, member-dsl-bdd; override via `bddFeature.profiles`
+- `src/scanners/` — pure-text scanners per language (step patterns + static bindings); Gherkin stays in `src/gherkin/`
 - `src/tsBdd.ts` — cucumber-js vs playwright-bdd runner detection (memoized)
 - `src/bindings.ts` — feature → binding index powering navigation and test running
 - `src/providers/` — toggleable UX mechanisms (diagnostics, code lens, symbols, hover, …)
-- `test-fixtures/` — self-contained example workspaces (Python + Rust + TypeScript) used by the unit tests
+- `test-fixtures/` — self-contained example workspaces (Python + Rust + TypeScript) used by the unit tests; `src/test/suite/llmansddSteps.test.ts` additionally verifies against the sibling `../llman-sdd` checkout when present (`LLMAN_SDD_PATH` override)
 
 ## Acknowledgements
 
